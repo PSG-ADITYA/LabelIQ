@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLabel } from '../context/LabelContext';
 import { SUPPORTED_FOOD_CATEGORIES, FoodCategoryConfig } from '../data/fssaiRules';
 import { FieldProvenance, ProductLabel } from '../types/label';
+import { API_BASE } from '../services/api';
 import { 
   Sparkles, 
   ArrowRight, 
@@ -149,7 +150,7 @@ export const AiDraftPage: React.FC = () => {
         headers['x-gemini-key'] = settings.geminiApiKey;
       }
 
-      const res = await fetch('/api/ai/draft', {
+      const res = await fetch(`${API_BASE}/ai/draft`, {
         method: 'POST',
         headers,
         body: formData,

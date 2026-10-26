@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { SUPPORTED_INDIAN_LANGUAGES } from '../data/translationDictionary';
 import { IndianLanguageCode, ProductLabel } from '../types/label';
+import { API_BASE } from '../services/api';
 
 interface TranslationModalProps {
   isOpen: boolean;
@@ -50,7 +51,7 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
       const ingredientsText = label.ingredients.map(i => i.name).join(', ');
       const allergensText = label.allergenDeclarations.join(', ');
 
-      const res = await fetch('/api/ai/translate', {
+      const res = await fetch(`${API_BASE}/ai/translate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

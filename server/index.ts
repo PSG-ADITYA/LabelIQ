@@ -98,6 +98,40 @@ export const REGULATORY_METADATA = {
 };
 
 // ============================================================================
+// 1.5 ROOT LANDING / REDIRECT TO FRONTEND
+// ============================================================================
+app.get('/', (_req: Request, res: Response) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LabelIQ Studio — Backend API</title>
+  <meta http-equiv="refresh" content="3; url=http://localhost:5175/" />
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 32px; max-width: 540px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); }
+    h1 { margin-top: 0; color: #38bdf8; font-size: 22px; font-weight: 700; }
+    p { color: #94a3b8; line-height: 1.6; font-size: 15px; margin: 12px 0; }
+    .btn { display: inline-block; background: #0284c7; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; margin-top: 12px; transition: background 0.2s; }
+    .btn:hover { background: #0369a1; }
+    .meta { margin-top: 24px; padding-top: 16px; border-top: 1px solid #334155; font-size: 13px; color: #64748b; }
+    code { background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf8; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🚀 LabelIQ Studio — API Server (Port 5000)</h1>
+    <p>The Express API backend is running successfully and healthy.</p>
+    <p>The interactive frontend application runs on <strong>port 5175</strong>.</p>
+    <a class="btn" href="http://localhost:5175/">Open Frontend UI (http://localhost:5175/)</a>
+    <p class="meta">Auto-redirecting to frontend in 3 seconds... • Health status: <a href="/api/health" style="color: #38bdf8;">/api/health</a></p>
+  </div>
+</body>
+</html>`);
+});
+
+// ============================================================================
 // 2. SYSTEM HEALTH & AI LIVE TEST ENDPOINTS
 // ============================================================================
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -1526,6 +1560,10 @@ app.use((err: any, _req: Request, res: Response, _next: express.NextFunction) =>
 });
 
 app.listen(PORT, () => {
-  console.log(`[LabelIQ Studio] Production backend running at http://localhost:${PORT}`);
-  console.log(`[LabelIQ Studio] Regulatory Framework: ${REGULATORY_METADATA.jurisdiction}`);
+  console.log(`\n==================================================`);
+  console.log(`🚀 LabelIQ Studio Services Initialized`);
+  console.log(`➜ Frontend UI:  http://localhost:5175/`);
+  console.log(`➜ Backend API:  http://localhost:${PORT}/`);
+  console.log(`➜ Regulatory:   ${REGULATORY_METADATA.jurisdiction}`);
+  console.log(`==================================================\n`);
 });

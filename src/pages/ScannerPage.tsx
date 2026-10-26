@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useLabel } from '../context/LabelContext';
+import { API_BASE } from '../services/api';
 import { 
   Scan, 
   UploadCloud, 
@@ -287,7 +288,7 @@ export const ScannerPage: React.FC = () => {
         headers['x-gemini-key'] = settings.geminiApiKey;
       }
 
-      const response = await fetch('/api/scan', {
+      const response = await fetch(`${API_BASE}/scan`, {
         method: 'POST',
         headers,
         body: formData,

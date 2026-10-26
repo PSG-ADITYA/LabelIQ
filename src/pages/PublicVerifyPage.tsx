@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLabel } from '../context/LabelContext';
+import { API_BASE } from '../services/api';
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -53,10 +54,10 @@ export const PublicVerifyPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/public/story/${encodeURIComponent(identifier.trim())}`);
+      const res = await fetch(`${API_BASE}/public/story/${encodeURIComponent(identifier.trim())}`);
       if (!res.ok) {
         // Fallback to basic verify
-        const fallbackRes = await fetch(`/api/public/verify/${encodeURIComponent(identifier.trim())}`);
+        const fallbackRes = await fetch(`${API_BASE}/public/verify/${encodeURIComponent(identifier.trim())}`);
         if (!fallbackRes.ok) throw new Error('Product or batch record not found in system.');
         const fbData = await fallbackRes.json();
         setStoryData(fbData.batch || fbData.product || null);
