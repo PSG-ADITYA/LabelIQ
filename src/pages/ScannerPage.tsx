@@ -35,6 +35,7 @@ export const ScannerPage: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [scanResult, setScanResult] = useState<any | null>(null);
   const [rawTextSnippet, setRawTextSnippet] = useState<string>('');
   const [extractionMethod, setExtractionMethod] = useState<string>('');
@@ -334,6 +335,49 @@ export const ScannerPage: React.FC = () => {
     executeScan(null, true);
   };
 
+  // Analyze reviewed raw text via backend /api/scan/analyze
+  const executeAnalyzeText = async () => {
+    if (!rawTextSnippet.trim()) {
+      showToast('No packaging text detected to analyze. Please upload or scan a label.', 'warning');
+      return;
+    }
+
+    setIsAnalyzing(true);
+    showToast('Extracting structured packaging fields from reviewed text...', 'info');
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (settings.geminiApiKey) {
+        headers['x-gemini-key'] = settings.geminiApiKey;
+      }
+
+      const res = await fetch(`${API_BASE}/scan/analyze`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          rawText: rawTextSnippet,
+          category: scanResult?.category || 'General Packaged Food',
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Server returned ${res.status}`);
+      }
+
+      const data = await res.json();
+      setScanResult(data.extractedData);
+      setExtractionMethod(data.method || 'Dual-Engine Packaging Analyzer');
+      setIsAiConfigured(data.isAi ?? Boolean(settings.geminiApiKey));
+      showToast('Structured fields updated from reviewed text!', 'success');
+    } catch (err: any) {
+      console.error('Analyze error:', err);
+      showToast(`Analysis failed: ${err.message}`, 'error');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   // Transfer extracted data to active label in context
   const transferToEditor = () => {
     if (!scanResult) return;
@@ -350,9 +394,9 @@ export const ScannerPage: React.FC = () => {
     if (scanResult.batchNumber) provenanceMap.batchNumber = 'ocr_extraction';
 
     updateCurrentLabel({
-      productName: scanResult.productName || '',
+      productName: scanResult.productName || 'Extracted Food Product',
       brandName: scanResult.brandName || '',
-      category: scanResult.category || 'Pickles, Chutneys, Sauces & Condiments',
+      category: scanResult.category || 'General Packaged Food',
       netQuantity: scanResult.netQuantityValue || scanResult.netQuantity || 400,
       netQuantityUnit: scanResult.netQuantityUnit || 'g',
       fssaiLicense: scanResult.fssaiLicense || '',
@@ -361,31 +405,31 @@ export const ScannerPage: React.FC = () => {
       allergenDeclarations: scanResult.allergenDeclarations || [],
       nutrition: {
         servingBasis: scanResult.nutrition?.servingBasis || 'per 100g',
-        servingSize: scanResult.nutrition?.servingSize || '15 g',
-        energyKcal: scanResult.nutrition?.energyKcal ?? 236,
-        proteinG: scanResult.nutrition?.proteinG ?? 2.4,
-        carbohydratesG: scanResult.nutrition?.carbohydratesG ?? 14.8,
-        totalSugarsG: scanResult.nutrition?.totalSugarsG ?? 2.1,
-        addedSugarsG: scanResult.nutrition?.addedSugarsG ?? 0.0,
-        totalFatG: scanResult.nutrition?.totalFatG ?? 18.5,
-        saturatedFatG: scanResult.nutrition?.saturatedFatG ?? 2.2,
-        transFatG: scanResult.nutrition?.transFatG ?? 0.0,
-        cholesterolMg: 0.0,
-        sodiumMg: scanResult.nutrition?.sodiumMg ?? 4280,
+        servingSize: scanResult.nutrition?.servingSize || '100g',
+        energyKcal: scanResult.nutrition?.energyKcal ?? null,
+        proteinG: scanResult.nutrition?.proteinG ?? null,
+        carbohydratesG: scanResult.nutrition?.carbohydratesG ?? null,
+        totalSugarsG: scanResult.nutrition?.totalSugarsG ?? null,
+        addedSugarsG: scanResult.nutrition?.addedSugarsG ?? null,
+        totalFatG: scanResult.nutrition?.totalFatG ?? null,
+        saturatedFatG: scanResult.nutrition?.saturatedFatG ?? null,
+        transFatG: scanResult.nutrition?.transFatG ?? null,
+        cholesterolMg: scanResult.nutrition?.cholesterolMg ?? null,
+        sodiumMg: scanResult.nutrition?.sodiumMg ?? null,
       },
-      batchNumber: scanResult.batchNumber || 'HK-MP-2024-B108',
-      mfgDate: scanResult.mfgDate || new Date().toISOString().split('T')[0],
+      batchNumber: scanResult.batchNumber || '',
+      mfgDate: scanResult.mfgDate || '',
       expiryDate: scanResult.expiryDate || '',
       storageInstructions: scanResult.storageInstructions || 'Store in a cool dry place.',
       manufacturer: {
-        name: scanResult.manufacturer?.name || scanResult.manufacturerDetails?.name || 'Artisan Foods',
-        address: scanResult.manufacturer?.address || scanResult.manufacturerDetails?.address || 'Industrial Estate, India',
-        city: 'Shimla',
-        state: 'Himachal Pradesh',
-        postalCode: '171001',
+        name: scanResult.manufacturer?.name || scanResult.manufacturerDetails?.name || '',
+        address: scanResult.manufacturer?.address || scanResult.manufacturerDetails?.address || '',
+        city: '',
+        state: '',
+        postalCode: '',
         country: 'India',
-        customerCarePhone: scanResult.manufacturer?.customerCarePhone || '+91 1800 200 4545',
-        customerCareEmail: scanResult.manufacturer?.customerCareEmail || 'care@artisanfoods.in',
+        customerCarePhone: scanResult.manufacturer?.customerCarePhone || '',
+        customerCareEmail: scanResult.manufacturer?.customerCareEmail || '',
       },
       provenanceMap,
       updatedAt: new Date().toISOString(),
@@ -566,7 +610,7 @@ export const ScannerPage: React.FC = () => {
             </div>
             <div className="text-center">
               <span className="text-sm font-bold text-slate-900 block">Take Photo with Device Camera</span>
-              <span className="text-[11px] text-slate-500">Live camera capture with front/back toggle</span>
+              <span className="text-[11px] text-slate-500">Live camera capture (Requires HTTPS or localhost)</span>
             </div>
           </button>
 
@@ -783,25 +827,58 @@ export const ScannerPage: React.FC = () => {
             </button>
           </div>
 
-          {/* Raw Text Snippet */}
+          {/* Step 1 & 2: Review Raw OCR Text & Analyze with AI */}
           {rawTextSnippet && (
-            <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-slate-600" />
-                  Detected Text from Packaging
-                </span>
-                <button
-                  onClick={copyRawText}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-forest-800 hover:text-forest-900 px-2.5 py-1 rounded-lg bg-forest-50 border border-forest-200 cursor-pointer"
-                >
-                  <Copy className="w-3 h-3" />
-                  Copy Text
-                </button>
+            <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-forest-800" />
+                    Review Raw Extracted Text (OCR)
+                  </span>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Verify or edit the raw optical text below before parsing into structured regulatory fields.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={copyRawText}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-slate-900 px-2.5 py-1.5 rounded-lg bg-cream-100 border border-cream-300 cursor-pointer"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>Copy</span>
+                  </button>
+                  <button
+                    disabled={isAnalyzing}
+                    onClick={executeAnalyzeText}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-forest-950 bg-limeaccent-400 hover:bg-limeaccent-300 px-3.5 py-1.5 rounded-xl shadow-xs transition-transform active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isAnalyzing ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Analyzing Text...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-forest-950" />
+                        <span>Analyze with AI</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-              <pre className="p-3.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap max-h-40">
-                {rawTextSnippet}
-              </pre>
+
+              <textarea
+                value={rawTextSnippet}
+                onChange={(e) => setRawTextSnippet(e.target.value)}
+                rows={5}
+                className="w-full p-3.5 rounded-xl bg-slate-900 text-slate-100 text-xs font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-forest-800 border border-slate-700 resize-y"
+                placeholder="Raw optical character text from packaging..."
+              />
+              <div className="text-[10px] text-slate-500 flex items-center justify-between">
+                <span>Tip: Fix any misspelled ingredient names or curved text before clicking <strong>Analyze with AI</strong>.</span>
+                <span>{rawTextSnippet.length} characters</span>
+              </div>
             </div>
           )}
 

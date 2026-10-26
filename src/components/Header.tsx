@@ -133,6 +133,65 @@ export const Header: React.FC = () => {
           })}
         </div>
       </div>
+
+      {/* Mobile Bottom Navigation Bar (Visible only on small mobile viewports < sm) */}
+      <nav 
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-forest-950/95 backdrop-blur-md border-t border-forest-800/90 px-2 py-1 flex items-center justify-around shadow-2xl safe-area-bottom no-print"
+        aria-label="Mobile Navigation"
+      >
+        <button
+          onClick={() => setActiveTab('home')}
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[10px] font-bold transition-all min-w-[50px] min-h-[44px] ${
+            activeTab === 'home' ? 'text-limeaccent-400 font-extrabold' : 'text-cream-300 hover:text-white'
+          }`}
+        >
+          <Home className="w-4 h-4 mb-0.5" />
+          <span>Studio</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('ai-draft')}
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[10px] font-bold transition-all min-w-[50px] min-h-[44px] ${
+            activeTab === 'ai-draft' ? 'text-limeaccent-400 font-extrabold' : 'text-cream-300 hover:text-white'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 mb-0.5 text-limeaccent-400" />
+          <span>AI Draft</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('scanner')}
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[10px] font-bold transition-all min-w-[50px] min-h-[44px] ${
+            activeTab === 'scanner' ? 'text-limeaccent-400 font-extrabold' : 'text-cream-300 hover:text-white'
+          }`}
+        >
+          <Scan className="w-4 h-4 mb-0.5" />
+          <span>Scanner</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('editor')}
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[10px] font-bold transition-all min-w-[50px] min-h-[44px] ${
+            activeTab === 'editor' ? 'text-limeaccent-400 font-extrabold' : 'text-cream-300 hover:text-white'
+          }`}
+        >
+          <FileText className="w-4 h-4 mb-0.5" />
+          <span>Canvas</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('batches')}
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[10px] font-bold transition-all min-w-[50px] min-h-[44px] relative ${
+            activeTab === 'batches' ? 'text-limeaccent-400 font-extrabold' : 'text-cream-300 hover:text-white'
+          }`}
+        >
+          <Package className="w-4 h-4 mb-0.5" />
+          <span>Batches</span>
+          {batches.length > 0 && (
+            <span className="absolute top-1 right-2 w-2 h-2 rounded-full bg-limeaccent-400" />
+          )}
+        </button>
+      </nav>
     </header>
   );
 };

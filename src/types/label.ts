@@ -169,6 +169,8 @@ export interface ProductLabel {
   manufacturer: ManufacturerDetails;
   barcode: string;
   qrCodeUrl?: string;
+  qrDestinationType?: 'public_traceability' | 'foscos_portal' | 'custom_url';
+  draftStatus?: 'draft' | 'in_review' | 'print_ready';
   dimensions: LabelDimensions;
   brandLogoUrl?: string;
   notes?: string;

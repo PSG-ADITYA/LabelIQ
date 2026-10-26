@@ -55,7 +55,7 @@ export function calculateExpiryDate(mfgDateStr: string, shelfLifeMonths: number 
   }
 }
 
-/** Official Food Safety Compliance System (FoSCoS) portal */
+/** Official Food Safety Compliance System (FoSCoS) portal - Search & Licensing Verification */
 export const OFFICIAL_FSSAI_VERIFY_PORTAL = 'https://foscos.fssai.gov.in';
 
 /**
@@ -63,9 +63,9 @@ export const OFFICIAL_FSSAI_VERIFY_PORTAL = 'https://foscos.fssai.gov.in';
  */
 export function getPublicTraceabilityUrl(batchNumberOrId: string, preferLan = false): string {
   if (preferLan) {
-    return `http://192.168.1.6:5173/?verify=${encodeURIComponent(batchNumberOrId)}`;
+    return `http://192.168.1.6:5175/?verify=${encodeURIComponent(batchNumberOrId)}`;
   }
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5175';
   return `${origin}/?verify=${encodeURIComponent(batchNumberOrId)}`;
 }
 
@@ -79,17 +79,38 @@ export function isLocalhost(url?: string): boolean {
 
 /**
  * Ensures any QR code payload on a packaging label is a genuine, valid, scannable URL.
- * Never returns fake non-existent domains or raw text.
+ * Supports configurable destinations:
+ * 1. 'public_traceability': LabelIQ public batch story & test certificates page
+ * 2. 'foscos_portal': Official FoSCoS portal (search license)
+ * 3. 'custom_url': Producer website
  */
-export function getValidQrUrl(label: { qrCodeUrl?: string; batchNumber?: string; id?: string }): string {
+export function getValidQrUrl(label: { 
+  qrCodeUrl?: string; 
+  batchNumber?: string; 
+  id?: string;
+  qrDestinationType?: 'public_traceability' | 'foscos_portal' | 'custom_url';
+}): string {
+  // Option 1: Explicit FoSCoS Government Portal
+  if (label.qrDestinationType === 'foscos_portal') {
+    return OFFICIAL_FSSAI_VERIFY_PORTAL;
+  }
+
+  // Option 2: Custom Producer Website URL
+  if (label.qrDestinationType === 'custom_url' && label.qrCodeUrl && label.qrCodeUrl.startsWith('http')) {
+    return label.qrCodeUrl;
+  }
+
+  // Option 3: Custom URL provided in qrCodeUrl (if valid)
   if (label.qrCodeUrl && label.qrCodeUrl.startsWith('http')) {
-    // Reject fake non-existent demo domains
     if (!label.qrCodeUrl.includes('pahadiheritagefarms.com') && !label.qrCodeUrl.includes('fssai.gov.in/verify/')) {
       return label.qrCodeUrl;
     }
   }
+
+  // Default Option: Public Batch Traceability Page
   if (label.batchNumber || label.id) {
     return getPublicTraceabilityUrl(label.batchNumber || label.id || '');
   }
+
   return OFFICIAL_FSSAI_VERIFY_PORTAL;
 }

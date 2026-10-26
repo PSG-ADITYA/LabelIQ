@@ -47,7 +47,9 @@ import {
   Languages,
   BookOpen,
   Compass,
-  ClipboardCheck
+  ClipboardCheck,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 
 export const EditorPage: React.FC = () => {
@@ -58,8 +60,17 @@ export const EditorPage: React.FC = () => {
     showToast, 
     batches, 
     applyBatchToEditor,
-    setActiveTab 
+    setActiveTab,
+    isDirty,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+    setDraftStatus
   } = useLabel();
+
+  // Mobile layout active pane (for small screens < 1024px)
+  const [mobileActivePane, setMobileActivePane] = useState<'editor' | 'preview'>('editor');
 
   // Sub-tabs on left inspector panel
   const [editorTab, setEditorTab] = useState<'packaging' | 'identity' | 'ingredients' | 'nutrition' | 'codes' | 'story'>('packaging');
@@ -283,12 +294,52 @@ export const EditorPage: React.FC = () => {
 
         {/* Global Actions */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Undo / Redo */}
+          <div className="flex items-center gap-1 border-r border-cream-200 pr-2">
+            <button
+              type="button"
+              onClick={undo}
+              disabled={!canUndo}
+              className="p-2 rounded-xl border border-cream-300 text-slate-700 hover:bg-cream-100 disabled:opacity-30 disabled:pointer-events-none transition-all"
+              title="Undo change"
+            >
+              <Undo2 className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={redo}
+              disabled={!canRedo}
+              className="p-2 rounded-xl border border-cream-300 text-slate-700 hover:bg-cream-100 disabled:opacity-30 disabled:pointer-events-none transition-all"
+              title="Redo change"
+            >
+              <Redo2 className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Draft Status Selector */}
+          <select
+            value={currentLabel.draftStatus || 'draft'}
+            onChange={(e) => setDraftStatus(e.target.value as any)}
+            className={`text-xs font-bold rounded-xl px-2.5 py-1.5 border transition-all cursor-pointer ${
+              currentLabel.draftStatus === 'print_ready'
+                ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                : currentLabel.draftStatus === 'in_review'
+                ? 'bg-blue-50 text-blue-900 border-blue-300'
+                : 'bg-amber-50 text-amber-900 border-amber-300'
+            }`}
+            title="Update packaging draft lifecycle status"
+          >
+            <option value="draft">📝 In Progress (Draft)</option>
+            <option value="in_review">🔍 QA / Review</option>
+            <option value="print_ready">🟢 Print-Ready Verified</option>
+          </select>
+
           <button
             onClick={() => setShowTemplateGallery(true)}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold text-xs border border-purple-200 transition-all shadow-sm"
           >
             <Palette className="w-4 h-4 text-purple-600" />
-            12 Themes Gallery
+            <span className="hidden sm:inline">12 Themes</span>
           </button>
 
           <button
@@ -297,7 +348,7 @@ export const EditorPage: React.FC = () => {
             title="Translate packaging to Indian regional languages"
           >
             <Languages className="w-4 h-4 text-blue-600" />
-            Translate {currentLabel.bilingual?.enabled ? `(${currentLabel.bilingual.targetLanguage.toUpperCase()})` : ''}
+            <span className="hidden sm:inline">Translate</span> {currentLabel.bilingual?.enabled ? `(${currentLabel.bilingual.targetLanguage.toUpperCase()})` : ''}
           </button>
 
           <button
@@ -306,7 +357,7 @@ export const EditorPage: React.FC = () => {
             title="Comprehensive pre-print compliance audit checklist"
           >
             <ClipboardCheck className="w-4 h-4 text-emerald-700" />
-            Pre-Print Check
+            Checklist
           </button>
 
           <button
@@ -315,7 +366,7 @@ export const EditorPage: React.FC = () => {
             title="Browser Print Preview"
           >
             <Printer className="w-4 h-4 text-slate-600" />
-            Print
+            <span className="hidden sm:inline">Print</span>
           </button>
 
           <button
@@ -335,17 +386,57 @@ export const EditorPage: React.FC = () => {
             title="Export vector PDF with exact physical dimensions"
           >
             <Download className="w-4 h-4 text-limeaccent-400" />
-            Export Vector PDF
+            PDF
           </button>
 
           <button
             onClick={saveCurrentProduct}
-            className="p-2 rounded-xl bg-cream-100 hover:bg-cream-200 text-forest-900 border border-cream-300 transition-all"
-            title="Save draft"
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all font-bold text-xs ${
+              isDirty 
+                ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200 ring-1 ring-amber-300' 
+                : 'bg-cream-100 text-forest-900 border-cream-300 hover:bg-cream-200'
+            }`}
+            title={isDirty ? "Save unsaved draft changes" : "Draft saved"}
           >
             <Save className="w-4 h-4" />
+            {isDirty ? (
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-ping" />
+                <span>Save *</span>
+              </span>
+            ) : (
+              <span>Saved</span>
+            )}
           </button>
         </div>
+      </div>
+
+      {/* Mobile Switcher Tab (< 1024px) */}
+      <div className="lg:hidden flex rounded-2xl bg-cream-200 p-1 border border-cream-300 text-xs font-bold no-print shadow-xs">
+        <button
+          type="button"
+          onClick={() => setMobileActivePane('editor')}
+          className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+            mobileActivePane === 'editor'
+              ? 'bg-forest-900 text-white shadow-xs'
+              : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          <Sliders className="w-4 h-4" />
+          <span>Edit Controls</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileActivePane('preview')}
+          className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+            mobileActivePane === 'preview'
+              ? 'bg-forest-900 text-white shadow-xs'
+              : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          <Eye className="w-4 h-4" />
+          <span>Live Canvas Preview</span>
+        </button>
       </div>
 
       {/* Production Batch & Multi-Quantity Context Banner */}
@@ -402,7 +493,7 @@ export const EditorPage: React.FC = () => {
       {/* Main Grid: Controls Sidebar (4 cols) & Visual Workspace (8 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Control Panel (4 cols) */}
-        <div className="lg:col-span-4 space-y-4 no-print">
+        <div className={`lg:col-span-4 space-y-4 no-print ${mobileActivePane === 'editor' ? 'block' : 'hidden lg:block'}`}>
           {/* Sub-tab Navigation */}
           <div className="bg-cream-100 p-1 rounded-2xl flex items-center justify-between border border-cream-200 text-xs">
             <button
@@ -1135,8 +1226,11 @@ export const EditorPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      updateCurrentLabel({ qrCodeUrl: OFFICIAL_FSSAI_VERIFY_PORTAL });
-                      showToast('Set QR destination to Official FoSCoS Government Portal!', 'success');
+                      updateCurrentLabel({ 
+                        qrCodeUrl: OFFICIAL_FSSAI_VERIFY_PORTAL,
+                        qrDestinationType: 'foscos_portal'
+                      });
+                      showToast('Set QR destination to Official FoSCoS Search Portal', 'info');
                     }}
                     className={`w-full p-2.5 rounded-xl text-left border text-xs transition-all ${
                       currentLabel.qrCodeUrl === OFFICIAL_FSSAI_VERIFY_PORTAL
@@ -1149,13 +1243,13 @@ export const EditorPage: React.FC = () => {
                         <ShieldCheck className="w-3.5 h-3.5 text-forest-800" />
                         <span>Official FSSAI FoSCoS Portal</span>
                       </div>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-forest-100 text-forest-800 font-bold">100% Genuine</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-bold border border-slate-200">Gov Search Directory</span>
                     </div>
                     <span className="text-[10px] text-slate-500 font-mono block mt-0.5">
                       {OFFICIAL_FSSAI_VERIFY_PORTAL}
                     </span>
-                    <span className="text-[10px] text-slate-500 block mt-0.5">
-                      Official Government portal for consumers to verify license validity worldwide.
+                    <span className="text-[10px] text-slate-500 block mt-0.5 leading-snug">
+                      Directs consumers to the official FSSAI portal where they can manually verify your 14-digit license number. (Visiting this directory does not automatically verify the package contents).
                     </span>
                   </button>
 
@@ -1164,8 +1258,11 @@ export const EditorPage: React.FC = () => {
                     type="button"
                     onClick={() => {
                       const url = getPublicTraceabilityUrl(currentLabel.batchNumber || currentLabel.id);
-                      updateCurrentLabel({ qrCodeUrl: url });
-                      showToast('Set QR destination to Public Traceability Portal!', 'success');
+                      updateCurrentLabel({ 
+                        qrCodeUrl: url,
+                        qrDestinationType: 'public_traceability'
+                      });
+                      showToast('Set QR destination to LabelIQ Batch Traceability Passport', 'success');
                     }}
                     className={`w-full p-2.5 rounded-xl text-left border text-xs transition-all ${
                       currentLabel.qrCodeUrl?.includes('?verify=') && !currentLabel.qrCodeUrl?.includes('192.168.')
@@ -1176,15 +1273,15 @@ export const EditorPage: React.FC = () => {
                     <div className="font-bold flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
                         <Tag className="w-3.5 h-3.5 text-forest-800" />
-                        <span>Batch Traceability Portal</span>
+                        <span>LabelIQ Batch Digital Passport</span>
                       </div>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-lime-100 text-forest-900 font-bold">Live Batch</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-lime-100 text-forest-900 font-bold border border-lime-200">Live Batch Passport</span>
                     </div>
                     <span className="text-[10px] text-slate-500 font-mono block mt-0.5 truncate">
                       {getPublicTraceabilityUrl(currentLabel.batchNumber || currentLabel.id)}
                     </span>
-                    <span className="text-[10px] text-slate-500 block mt-0.5">
-                      Shows batch production date, expiry, recipe ingredients, and FSSAI declaration.
+                    <span className="text-[10px] text-slate-500 block mt-0.5 leading-snug">
+                      Interactive batch passport displaying exact mfg date, shelf life, recipe ingredients, allergen statements, and producer license declarations.
                     </span>
                   </button>
 
@@ -1193,7 +1290,10 @@ export const EditorPage: React.FC = () => {
                     type="button"
                     onClick={() => {
                       const url = getPublicTraceabilityUrl(currentLabel.batchNumber || currentLabel.id, true);
-                      updateCurrentLabel({ qrCodeUrl: url });
+                      updateCurrentLabel({ 
+                        qrCodeUrl: url,
+                        qrDestinationType: 'public_traceability'
+                      });
                       showToast('Set QR destination to Local Wi-Fi Network URL!', 'success');
                     }}
                     className={`w-full p-2.5 rounded-xl text-left border text-xs transition-all ${
@@ -1207,13 +1307,13 @@ export const EditorPage: React.FC = () => {
                         <Smartphone className="w-3.5 h-3.5 text-forest-800" />
                         <span>Direct Smartphone Scan (Wi-Fi LAN)</span>
                       </div>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 font-bold">Hackathon Demo</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 font-bold border border-blue-200">Local Testing</span>
                     </div>
                     <span className="text-[10px] text-slate-500 font-mono block mt-0.5 truncate">
                       {getPublicTraceabilityUrl(currentLabel.batchNumber || currentLabel.id, true)}
                     </span>
-                    <span className="text-[10px] text-slate-500 block mt-0.5">
-                      Point phone camera at screen to test live verification on local Wi-Fi.
+                    <span className="text-[10px] text-slate-500 block mt-0.5 leading-snug">
+                      Test scanning with your phone's camera while connected to the same local Wi-Fi router.
                     </span>
                   </button>
 
@@ -1229,7 +1329,10 @@ export const EditorPage: React.FC = () => {
                           ? currentLabel.qrCodeUrl 
                           : ''
                       }
-                      onChange={(e) => updateCurrentLabel({ qrCodeUrl: e.target.value })}
+                      onChange={(e) => updateCurrentLabel({ 
+                        qrCodeUrl: e.target.value,
+                        qrDestinationType: 'custom_url'
+                      })}
                       placeholder="https://yourbrand.com/trace"
                       className="w-full mt-1 text-[11px] px-2 py-1.5 rounded border border-cream-300 font-mono"
                     />
@@ -1279,7 +1382,7 @@ export const EditorPage: React.FC = () => {
         </div>
 
         {/* Central Canvas Workspace (8 cols) */}
-        <div className="lg:col-span-8 space-y-3">
+        <div className={`lg:col-span-8 space-y-3 ${mobileActivePane === 'preview' ? 'block' : 'hidden lg:block'}`}>
           {/* Workspace Toolbar: Zoom, Guides, and Panel Selector */}
           <div className="bg-white p-3 rounded-2xl border border-cream-200 shadow-sm flex flex-wrap items-center justify-between gap-3 no-print">
             {/* Panel Selector (For Two-Panel Wrap) */}
@@ -1658,6 +1761,17 @@ export const EditorPage: React.FC = () => {
               >
                 <X className="w-5 h-5" />
               </button>
+            </div>
+
+            {/* Regulatory Guidance Disclaimer Banner */}
+            <div className="p-3.5 bg-amber-50 border-b border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="leading-snug">
+                <strong className="font-bold block text-amber-950">Regulatory Assistance & Guidance Notice:</strong>
+                <span>
+                  LabelIQ provides automated design, formatting, and layout assistance. It does not replace independent laboratory nutritional testing or official FSSAI legal certification. Final packaging must undergo human compliance review under FSS (Labelling and Display) Regulations, 2020.
+                </span>
+              </div>
             </div>
 
             {/* Checklist items */}

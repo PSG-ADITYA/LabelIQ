@@ -23,7 +23,7 @@ const AppContent: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col bg-cream-50 text-slate-800 font-sans selection:bg-limeaccent-200 selection:text-forest-900">
       <Header />
-      <main className="flex-1">
+      <main className="flex-1 pb-16 sm:pb-0">
         {activeTab === 'home' && <HomePage />}
         {activeTab === 'ai-draft' && <AiDraftPage />}
         {activeTab === 'dashboard' && <DashboardPage />}

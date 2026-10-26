@@ -63,6 +63,9 @@ logDatabaseMode();
 initDatabase();
 seedDemoData(false);
 
+// Verified Gemini Models supported by Google AI Studio
+export const CANDIDATE_GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash'];
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -142,7 +145,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
     version: '2.0.0',
     database: 'SQLite 3 (better-sqlite3)',
     aiConfigured: hasGeminiKey,
-    activeAiModel: 'gemini-3.8-flash',
+    activeAiModel: 'gemini-3.5-flash',
     ocrEngine: 'Tesseract.js v7 + Gemini Vision (Dual-Engine)',
     regulatoryMetadata: REGULATORY_METADATA,
   });
@@ -178,7 +181,7 @@ app.get('/api/ai/test', async (_req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const candidateModels = ['gemini-3.5-flash', 'gemini-3.8-flash'];
+  const candidateModels = CANDIDATE_GEMINI_MODELS;
   let lastError: any = null;
 
   for (const model of candidateModels) {
@@ -794,7 +797,7 @@ MANDATORY REGULATORY PRESERVATION RULES:
 Input Fields:
 ${JSON.stringify(fields, null, 2)}`;
 
-        const candidateModels = ['gemini-3.5-flash', 'gemini-3.8-flash'];
+        const candidateModels = CANDIDATE_GEMINI_MODELS;
         for (const model of candidateModels) {
           try {
             const apiRes = await fetch(
@@ -807,8 +810,9 @@ ${JSON.stringify(fields, null, 2)}`;
                 },
                 body: JSON.stringify({
                   contents: [{ parts: [{ text: prompt }] }],
+                  generationConfig: { response_mime_type: 'application/json' }
                 }),
-                signal: AbortSignal.timeout(15000),
+                signal: AbortSignal.timeout(20000),
               }
             );
 
@@ -1077,7 +1081,7 @@ Return ONLY pure JSON without markdown backticks.`;
           });
         }
 
-        const candidateModels = ['gemini-3.5-flash', 'gemini-3.8-flash'];
+        const candidateModels = CANDIDATE_GEMINI_MODELS;
         let parsedAiDraft: any = null;
         let successfulModel = '';
 
@@ -1092,7 +1096,8 @@ Return ONLY pure JSON without markdown backticks.`;
                   'x-goog-api-key': customKey.trim(),
                 },
                 body: JSON.stringify({
-                  contents: [{ parts: userContentParts }]
+                  contents: [{ parts: userContentParts }],
+                  generationConfig: { response_mime_type: 'application/json', temperature: 0.2 }
                 }),
                 signal: AbortSignal.timeout(28000),
               }
@@ -1114,6 +1119,7 @@ Return ONLY pure JSON without markdown backticks.`;
         if (parsedAiDraft) {
           res.json({
             success: true,
+            isAi: true,
             method: `Google ${successfulModel} Generative AI`,
             draft: parsedAiDraft
           });
@@ -1227,7 +1233,9 @@ Return ONLY pure JSON without markdown backticks.`;
 
     res.json({
       success: true,
+      isAi: false,
       method: 'Deterministic Agricultural Rule Engine (Offline)',
+      notice: customKey ? 'Google Gemini was unavailable or rate-limited. Fallback deterministic rule engine used.' : 'Running in offline deterministic rule engine mode.',
       draft: {
         productName: prodName,
         brandName: brand,
@@ -1368,7 +1376,7 @@ RULES:
 2. Return ONLY clean JSON, without markdown backticks.`;
 
         const base64Data = req.file.buffer.toString('base64');
-        const candidateVisionModels = ['gemini-3.5-flash', 'gemini-3.8-flash'];
+        const candidateVisionModels = CANDIDATE_GEMINI_MODELS;
         let parsedVisionData: any = null;
         let successfulModel = '';
 
@@ -1397,6 +1405,7 @@ RULES:
                       ],
                     },
                   ],
+                  generationConfig: { response_mime_type: 'application/json', temperature: 0.1 }
                 }),
                 signal: AbortSignal.timeout(30000),
               }
@@ -1474,6 +1483,14 @@ RULES:
         const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         const fssaiMatch = rawText.match(/\b\d{14}\b/);
         const batchMatch = rawText.match(/(?:batch|lot)\s*(?:no\.?|code|#)?\s*[:\-]?\s*([a-z0-9\-\/]+)/i);
+        const qtyMatch = rawText.match(/(\d+(?:\.\d+)?)\s*(g|kg|ml|l|grams?|kilograms?|liters?|litres?)\b/i);
+        let parsedNetQty: number = 400;
+        let parsedNetUnit = 'g';
+        if (qtyMatch) {
+          parsedNetQty = parseFloat(qtyMatch[1]);
+          const rawUnit = qtyMatch[2].toLowerCase();
+          parsedNetUnit = rawUnit.startsWith('k') ? 'kg' : (rawUnit.startsWith('l') ? 'l' : (rawUnit.startsWith('m') ? 'ml' : 'g'));
+        }
 
         res.json({
           success: true,
@@ -1485,8 +1502,8 @@ RULES:
             productName: lines[0] || 'Extracted Food Product',
             brandName: lines.length > 1 ? lines[1] : '',
             category: 'General Packaged Food',
-            netQuantity: 400,
-            netQuantityUnit: 'g',
+            netQuantity: parsedNetQty,
+            netQuantityUnit: parsedNetUnit,
             fssaiLicense: fssaiMatch ? fssaiMatch[0] : '',
             batchNumber: batchMatch ? batchMatch[1].trim() : '',
             mfgDate: '',
@@ -1522,7 +1539,12 @@ RULES:
             confidenceMetrics: {
               ocrVisualConfidence: Math.round(ocrConfidence),
               regulatoryInterpretationConfidence: 70,
-            }
+            },
+            lowConfidenceFields: [
+              ...(!qtyMatch ? [{ field: 'Net Quantity', reason: 'Net quantity not clearly recognized on packaging.' }] : []),
+              ...(!fssaiMatch ? [{ field: 'FSSAI License', reason: '14-digit FSSAI license number not detected.' }] : []),
+              { field: 'Nutrition Facts', reason: 'Nutrition assay values must be confirmed manually.' }
+            ]
           },
           meta: {
             fileName: req.file.originalname,
@@ -1549,6 +1571,181 @@ RULES:
     res.status(400).json({ error: 'Unsupported file processing request.' });
   } catch (err: any) {
     console.error('[Scan] Server endpoint error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// 7.5 STRUCTURED PACKAGING ANALYSIS FOR USER-REVIEWED RAW TEXT
+// ============================================================================
+app.post('/api/scan/analyze', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawText = (req.body?.rawText || req.body?.text || '').trim();
+    const category = (req.body?.category || 'General Packaged Food').trim();
+    const customKey = (req.headers['x-gemini-key'] as string) || process.env.GEMINI_API_KEY;
+
+    if (!rawText) {
+      res.status(400).json({ error: 'No packaging text provided for analysis.' });
+      return;
+    }
+
+    // PATH 1: Live Gemini AI Parsing
+    if (customKey && customKey.trim().length > 10) {
+      const prompt = `You are an expert food regulatory packaging compliance analyst.
+Analyze the following packaging text transcribed from an authentic food label.
+Extract all visible fields into this strict JSON structure:
+{
+  "productName": "string or empty",
+  "brandName": "string or empty",
+  "category": "${category}",
+  "description": "string or empty",
+  "netQuantity": number or null,
+  "netQuantityUnit": "g" | "kg" | "ml" | "l",
+  "fssaiLicense": "string 14-digit number or empty",
+  "isVegetarian": boolean,
+  "ingredients": [{ "name": "string", "percentage": "string or empty", "isAllergen": boolean }],
+  "allergenDeclarations": ["string"],
+  "nutrition": {
+    "servingBasis": "per 100g",
+    "servingSize": "100g",
+    "energyKcal": null,
+    "proteinG": null,
+    "carbohydratesG": null,
+    "totalSugarsG": null,
+    "addedSugarsG": null,
+    "totalFatG": null,
+    "saturatedFatG": null,
+    "transFatG": null,
+    "sodiumMg": null
+  },
+  "batchNumber": "string or empty",
+  "mfgDate": "YYYY-MM-DD or empty",
+  "expiryDate": "YYYY-MM-DD or empty",
+  "storageInstructions": "string or empty",
+  "manufacturer": { "name": "string", "address": "string", "customerCarePhone": "string", "customerCareEmail": "string" },
+  "lowConfidenceFields": [{ "field": "fieldName", "reason": "reason" }]
+}
+CRITICAL RULES:
+1. NEVER invent, guess, or hallucinate nutrition values. If not explicitly found in text, keep as null.
+2. If 14-digit FSSAI number or batch code is missing, leave empty string "".
+3. Return ONLY valid pure JSON.`;
+
+      for (const model of CANDIDATE_GEMINI_MODELS) {
+        try {
+          const apiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': customKey.trim(),
+              },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `${prompt}\n\nPackaging Text to Analyze:\n"""\n${rawText}\n"""` }] }],
+                generationConfig: { response_mime_type: 'application/json', temperature: 0.1 }
+              }),
+              signal: AbortSignal.timeout(25000),
+            }
+          );
+
+          if (apiRes.ok) {
+            const data = await apiRes.json();
+            const textOut = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const parsed = JSON.parse(textOut.replace(/```json/g, '').replace(/```/g, '').trim());
+            res.json({
+              success: true,
+              isAi: true,
+              method: `Google ${model} AI Field Analysis`,
+              extractedData: parsed,
+              rawExtractedText: rawText
+            });
+            return;
+          }
+        } catch (mErr: any) {
+          console.warn(`[Analyze] Model ${model} error:`, mErr.message);
+        }
+      }
+    }
+
+    // PATH 2: Deterministic Agricultural Rule Engine Fallback
+    const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const fssaiMatch = rawText.match(/\b\d{14}\b/);
+    const batchMatch = rawText.match(/(?:batch|lot|b\.no|lot no)\s*[:\-.]?\s*([a-z0-9\-\/]+)/i);
+    const qtyMatch = rawText.match(/(\d+(?:\.\d+)?)\s*(g|kg|ml|l|grams?|kilograms?|liters?|litres?)\b/i);
+    let netQuantity: number | null = null;
+    let netQuantityUnit = 'g';
+    if (qtyMatch) {
+      netQuantity = parseFloat(qtyMatch[1]);
+      const u = qtyMatch[2].toLowerCase();
+      netQuantityUnit = u.startsWith('k') ? 'kg' : (u.startsWith('l') ? 'l' : (u.startsWith('m') ? 'ml' : 'g'));
+    }
+
+    const allergenKeys = [
+      { key: 'mustard', label: 'Mustard' },
+      { key: 'wheat', label: 'Wheat (Gluten)' },
+      { key: 'milk', label: 'Milk & Dairy' },
+      { key: 'peanut', label: 'Peanuts' },
+      { key: 'soy', label: 'Soybeans' },
+      { key: 'sesame', label: 'Sesame' },
+    ];
+    const detectedAllergens: string[] = [];
+    const ingredients = lines.slice(1, 8).map((line, idx) => {
+      const isAlg = allergenKeys.some(a => line.toLowerCase().includes(a.key));
+      return {
+        id: `ing-${idx}`,
+        name: line.replace(/[^\w\s]/g, '').trim(),
+        percentage: '',
+        order: idx + 1,
+        isAllergen: isAlg,
+      };
+    });
+
+    res.json({
+      success: true,
+      isAi: false,
+      method: 'Deterministic Agricultural Rule Engine (Offline)',
+      notice: customKey ? 'Gemini AI unavailable or rate-limited. Fallback rule engine used.' : 'Running in offline rule engine mode.',
+      extractedData: {
+        productName: lines[0] || 'Extracted Food Product',
+        brandName: lines.length > 1 ? lines[1] : '',
+        category,
+        netQuantity,
+        netQuantityUnit,
+        fssaiLicense: fssaiMatch ? fssaiMatch[0] : '',
+        batchNumber: batchMatch ? batchMatch[1].trim() : '',
+        mfgDate: '',
+        expiryDate: '',
+        ingredients,
+        allergenDeclarations: detectedAllergens,
+        nutrition: {
+          servingBasis: 'per 100g',
+          servingSize: '100g',
+          energyKcal: null,
+          proteinG: null,
+          carbohydratesG: null,
+          totalSugarsG: null,
+          addedSugarsG: null,
+          totalFatG: null,
+          saturatedFatG: null,
+          transFatG: null,
+          sodiumMg: null,
+        },
+        storageInstructions: 'Store in a cool dry place.',
+        manufacturer: {
+          name: lines[1] || '',
+          address: '',
+          customerCarePhone: '',
+          customerCareEmail: '',
+        },
+        lowConfidenceFields: [
+          ...(!netQuantity ? [{ field: 'Net Quantity', reason: 'Net quantity not clearly recognized on packaging.' }] : []),
+          ...(!fssaiMatch ? [{ field: 'FSSAI License', reason: '14-digit statutory license not found in extracted text.' }] : []),
+          { field: 'Nutrition Facts', reason: 'Laboratory assay nutrition values must be entered manually or verified.' }
+        ]
+      },
+      rawExtractedText: rawText
+    });
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });

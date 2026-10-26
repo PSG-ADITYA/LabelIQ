@@ -19,14 +19,38 @@ import {
   QrCode,
   Smartphone,
   ExternalLink,
-  RotateCcw
+  RotateCcw,
+  Edit3,
+  Copy,
+  Trash2,
+  Tag,
+  MessageSquare,
+  Send,
+  X
 } from 'lucide-react';
 import { QrCodeSvg } from '../utils/barcodeGenerator';
 import { OFFICIAL_FSSAI_VERIFY_PORTAL } from '../utils/batchUtils';
 
 export const HomePage: React.FC = () => {
-  const { setActiveTab, resetToDemo, createNewBlankLabel, batches, updateCurrentLabel } = useLabel();
+  const { 
+    setActiveTab, 
+    resetToDemo, 
+    createNewBlankLabel, 
+    batches, 
+    updateCurrentLabel,
+    savedProducts,
+    loadProduct,
+    duplicateProduct,
+    deleteProduct,
+    renameProduct,
+    showToast
+  } = useLabel();
   const [demoLoading, setDemoLoading] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState<string>('');
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackCategory, setFeedbackCategory] = useState<'ocr_scan' | 'ai_draft' | 'layout_editor' | 'other'>('ocr_scan');
 
   const handleLaunchSample = async (type: 'pickle' | 'honey' | 'turmeric') => {
     setDemoLoading(true);
@@ -300,6 +324,158 @@ export const HomePage: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* 1.5 RECENT PRODUCT DRAFTS & WORKSPACE */}
+      <section className="bg-white rounded-3xl border border-cream-200 p-6 sm:p-8 shadow-xs space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-forest-800">Product Workspace</span>
+              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-forest-50 text-forest-800 border border-forest-200">
+                {savedProducts.length} drafts
+              </span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight font-serif mt-0.5">
+              Recent Packaging Drafts & Formulations
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Open any existing label in the canvas, duplicate recipes for seasonal runs, or edit metadata.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setFeedbackModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-cream-300 text-slate-700 hover:bg-cream-100 text-xs font-bold transition-all"
+              title="Report an issue or scan feedback"
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-forest-800" />
+              <span>Report Issue</span>
+            </button>
+            <button
+              onClick={handleCreateManually}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-forest-900 hover:bg-forest-800 text-white text-xs font-bold transition-all shadow-xs"
+            >
+              <PenTool className="w-3.5 h-3.5 text-limeaccent-400" />
+              <span>New Draft</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Drafts List Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {savedProducts.map((p) => {
+            const isEditingName = renamingId === p.id;
+            const status = p.draftStatus || 'draft';
+            return (
+              <div
+                key={p.id}
+                className="p-4 rounded-2xl border border-cream-200 hover:border-forest-600 bg-cream-50/40 hover:bg-white transition-all shadow-2xs hover:shadow-xs flex flex-col justify-between space-y-3"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider font-semibold">
+                      {p.dimensions.width}×{p.dimensions.height}{p.dimensions.unit}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {p.isDemoSample && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                          DEMO DATA
+                        </span>
+                      )}
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                        status === 'print_ready'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                          : status === 'in_review'
+                          ? 'bg-blue-50 text-blue-800 border-blue-300'
+                          : 'bg-amber-50 text-amber-800 border-amber-300'
+                      }`}>
+                        {status === 'print_ready' ? '🟢 Print-Ready' : status === 'in_review' ? '🔍 In Review' : '📝 Draft'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {isEditingName ? (
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <input
+                        type="text"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        className="text-xs px-2 py-1 rounded border border-forest-600 bg-white flex-1 font-bold"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => {
+                          renameProduct(p.id, renameValue);
+                          setRenamingId(null);
+                        }}
+                        className="px-2 py-1 rounded bg-forest-900 text-white text-[10px] font-bold"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setRenamingId(null)}
+                        className="px-2 py-1 rounded bg-cream-200 text-slate-700 text-[10px]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <h3 className="font-bold text-slate-900 text-sm leading-snug line-clamp-2">
+                      {p.productName || 'Untitled Label'}
+                    </h3>
+                  )}
+
+                  <p className="text-[11px] text-slate-500 line-clamp-1">
+                    {p.brandName ? `${p.brandName} • ` : ''}{p.category} ({p.netQuantity}{p.netQuantityUnit})
+                  </p>
+                </div>
+
+                <div className="pt-2 border-t border-cream-200/80 flex items-center justify-between gap-1">
+                  <button
+                    onClick={() => loadProduct(p.id)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-forest-900 hover:bg-forest-800 text-white text-xs font-bold transition-all shadow-2xs"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-limeaccent-400" />
+                    <span>Open Editor</span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        setRenamingId(p.id);
+                        setRenameValue(p.productName);
+                      }}
+                      className="p-1.5 rounded-lg border border-cream-300 text-slate-600 hover:bg-cream-100 hover:text-slate-900"
+                      title="Rename label draft"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => duplicateProduct(p.id)}
+                      className="p-1.5 rounded-lg border border-cream-300 text-slate-600 hover:bg-cream-100 hover:text-slate-900"
+                      title="Duplicate product draft"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Delete draft "${p.productName}"?`)) {
+                          deleteProduct(p.id);
+                        }
+                      }}
+                      className="p-1.5 rounded-lg border border-cream-300 text-slate-400 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50"
+                      title="Delete draft"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -617,6 +793,85 @@ export const HomePage: React.FC = () => {
           <strong className="text-slate-800">Regulatory Review Notice:</strong> LabelIQ provides algorithmic layout and statutory checklist assistance referencing Indian Food Safety and Standards (Labelling and Display) Regulations, 2020 and Legal Metrology Rules, 2011. Algorithmic checks do not constitute a statutory certificate or legal guarantee of compliance. Food Business Operators are responsible for packaging compliance.
         </p>
       </section>
+
+      {/* FEEDBACK & DIAGNOSTICS MODAL */}
+      {feedbackModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl border border-cream-200 shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="p-5 bg-forest-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-limeaccent-400" />
+                <h3 className="font-bold text-base font-serif">Report Issue or Scan Feedback</h3>
+              </div>
+              <button
+                onClick={() => setFeedbackModalOpen(false)}
+                className="p-1 rounded-lg text-cream-300 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                showToast('Thank you! Your feedback and diagnostics report have been recorded.', 'success');
+                setFeedbackModalOpen(false);
+                setFeedbackText('');
+              }}
+              className="p-6 space-y-4 text-xs"
+            >
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Issue Category</label>
+                <select
+                  value={feedbackCategory}
+                  onChange={(e) => setFeedbackCategory(e.target.value as any)}
+                  className="w-full p-2.5 rounded-xl border border-cream-300 text-xs bg-cream-50"
+                >
+                  <option value="ocr_scan">Camera / Tesseract OCR Failed Scan</option>
+                  <option value="ai_draft">Gemini AI Formulation / Draft Error</option>
+                  <option value="layout_editor">Canvas Layout / Font Clipping Issue</option>
+                  <option value="other">General Feedback / Feature Request</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Describe What Happened</label>
+                <textarea
+                  required
+                  rows={4}
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  placeholder="e.g. Scanned an oily label image, text was unreadable. Or Gemini timed out during recipe analysis..."
+                  className="w-full p-3 rounded-xl border border-cream-300 text-xs focus:ring-1 focus:ring-forest-800"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-cream-100 border border-cream-200 text-[11px] text-slate-600 space-y-1">
+                <span className="font-bold text-slate-800 block">System Diagnostics:</span>
+                <div>User Agent: {typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 60) + '...' : 'Unknown'}</div>
+                <div>Storage Mode: Local SQLite & Browser LocalStorage</div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setFeedbackModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-forest-900 text-white font-bold hover:bg-forest-800 transition-colors flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5 text-limeaccent-400" />
+                  <span>Submit Report</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

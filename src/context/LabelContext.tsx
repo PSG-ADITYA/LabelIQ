@@ -34,12 +34,19 @@ interface LabelContextType {
   comparisonTarget: ProductLabel | null;
   toasts: Toast[];
   aiConnectionStatus: AiTestResponse | null;
+  isDirty: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
   setActiveTab: (tab: NavTab) => void;
-  updateCurrentLabel: (partial: Partial<ProductLabel>) => void;
+  updateCurrentLabel: (partial: Partial<ProductLabel>, recordHistory?: boolean) => void;
   saveCurrentProduct: () => void;
   loadProduct: (id: string) => void;
   deleteProduct: (id: string) => void;
   duplicateProduct: (id: string) => void;
+  renameProduct: (id: string, newName: string) => void;
+  setDraftStatus: (status: 'draft' | 'in_review' | 'print_ready') => void;
   setComparisonTarget: (target: ProductLabel | null) => void;
   resetToDemo: () => void;
   updateSettings: (partial: Partial<AppSettings>) => void;
@@ -93,6 +100,11 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     return DEMO_PICKLE_V1;
   });
+
+  // Undo / Redo history stacks & dirty state
+  const [undoStack, setUndoStack] = useState<ProductLabel[]>([]);
+  const [redoStack, setRedoStack] = useState<ProductLabel[]>([]);
+  const [isDirty, setIsDirty] = useState<boolean>(false);
 
   // Production Batches
   const [batches, setBatches] = useState<ProductionBatch[]>([]);
@@ -195,12 +207,54 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const updateCurrentLabel = (partial: Partial<ProductLabel>) => {
+  // Warn user on leaving page if unsaved changes exist
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
+  const updateCurrentLabel = (partial: Partial<ProductLabel>, recordHistory: boolean = true) => {
+    if (recordHistory) {
+      setUndoStack(prev => [...prev.slice(-30), currentLabel]);
+      setRedoStack([]);
+      setIsDirty(true);
+    }
     setCurrentLabel(prev => ({
       ...prev,
       ...partial,
       updatedAt: new Date().toISOString(),
     }));
+  };
+
+  const undo = () => {
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+    setRedoStack(prev => [...prev, currentLabel]);
+    setCurrentLabel(previous);
+    setIsDirty(true);
+    showToast('Undo applied.', 'info');
+  };
+
+  const redo = () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(prev => prev.slice(0, -1));
+    setUndoStack(prev => [...prev, currentLabel]);
+    setCurrentLabel(next);
+    setIsDirty(true);
+    showToast('Redo applied.', 'info');
+  };
+
+  const setDraftStatus = (status: 'draft' | 'in_review' | 'print_ready') => {
+    updateCurrentLabel({ draftStatus: status });
+    showToast(`Draft status set to ${status === 'print_ready' ? 'Print-Ready' : status === 'in_review' ? 'In Review' : 'Draft'}.`, 'info');
   };
 
   const saveCurrentProduct = () => {
@@ -217,13 +271,27 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return [updated, ...prev];
       }
     });
+    setIsDirty(false);
     showToast(`Draft "${updated.productName || 'Untitled Label'}" saved successfully!`, 'success');
+  };
+
+  const renameProduct = (id: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setSavedProducts(prev => prev.map(p => (p.id === id ? { ...p, productName: trimmed, updatedAt: new Date().toISOString() } : p)));
+    if (currentLabel.id === id) {
+      setCurrentLabel(prev => ({ ...prev, productName: trimmed, updatedAt: new Date().toISOString() }));
+    }
+    showToast(`Renamed product to "${trimmed}".`, 'success');
   };
 
   const loadProduct = (id: string) => {
     const target = savedProducts.find(p => p.id === id);
     if (target) {
       setCurrentLabel(target);
+      setUndoStack([]);
+      setRedoStack([]);
+      setIsDirty(false);
       showToast(`Loaded "${target.productName}" into editor.`, 'info');
       setActiveTab('editor');
     }
@@ -234,6 +302,7 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast('Product draft deleted.', 'info');
     if (currentLabel.id === id) {
       setCurrentLabel(DEMO_PICKLE_V1);
+      setIsDirty(false);
     }
   };
 
@@ -245,6 +314,7 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: `prod-${Date.now()}`,
       productName: `${original.productName} (Copy)`,
       version: 1,
+      draftStatus: 'draft',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDemoSample: false,
@@ -257,6 +327,9 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCurrentLabel(DEMO_PICKLE_V1);
     setComparisonTarget(DEMO_PICKLE_V2);
     setSavedProducts([DEMO_PICKLE_V1, DEMO_PICKLE_V2]);
+    setUndoStack([]);
+    setRedoStack([]);
+    setIsDirty(false);
     await api.resetDemoDatabase();
     await loadBatches();
     showToast('Reset to authentic demo workspace with Sample Batches B108 & B109.', 'info');
@@ -341,12 +414,19 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         comparisonTarget,
         toasts,
         aiConnectionStatus,
+        isDirty,
+        canUndo: undoStack.length > 0,
+        canRedo: redoStack.length > 0,
+        undo,
+        redo,
         setActiveTab,
         updateCurrentLabel,
         saveCurrentProduct,
         loadProduct,
         deleteProduct,
         duplicateProduct,
+        renameProduct,
+        setDraftStatus,
         setComparisonTarget,
         resetToDemo,
         updateSettings,
