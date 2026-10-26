@@ -132,20 +132,40 @@ export const AiDraftPage: React.FC = () => {
     showToast('Analyzing product formulation & packaging requirements...', 'info');
 
     try {
-      const formData = new FormData();
-      formData.append('description', description);
-      formData.append('category', selectedCategory);
-      formData.append('jurisdiction', settings.defaultJurisdiction || 'FSSAI (India)');
+      let filePayload: { name: string; mimetype: string; base64: string } | null = null;
       if (supportFile) {
-        formData.append('supportFile', supportFile);
+        const base64Str = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const resStr = (reader.result as string) || '';
+            const base64Part = resStr.includes(',') ? resStr.split(',')[1] : resStr;
+            resolve(base64Part);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(supportFile);
+        });
+        filePayload = {
+          name: supportFile.name,
+          mimetype: supportFile.type || 'image/jpeg',
+          base64: base64Str,
+        };
       }
-      formData.append('knownFields', JSON.stringify({
-        brandName: knownBrand.trim(),
-        netQuantity: knownNetQty ? parseFloat(knownNetQty) : undefined,
-        fssaiLicense: knownFssai.trim(),
-      }));
 
-      const headers: Record<string, string> = {};
+      const payload = {
+        description: description.trim(),
+        category: selectedCategory,
+        jurisdiction: settings.defaultJurisdiction || 'FSSAI (India)',
+        knownFields: {
+          brandName: knownBrand.trim(),
+          netQuantity: knownNetQty ? parseFloat(knownNetQty) : undefined,
+          fssaiLicense: knownFssai.trim(),
+        },
+        file: filePayload,
+      };
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
       if (settings.geminiApiKey) {
         headers['x-gemini-key'] = settings.geminiApiKey;
       }
@@ -153,15 +173,22 @@ export const AiDraftPage: React.FC = () => {
       const res = await fetch(`${API_BASE}/ai/draft`, {
         method: 'POST',
         headers,
-        body: formData,
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        if (res.status === 404) {
-          throw new Error('Backend API not found (HTTP 404). In production, please set VITE_API_URL to your deployed Express backend.');
+        let errorMsg = '';
+        try {
+          const errJson = await res.json();
+          errorMsg = errJson.error || errJson.message;
+        } catch {
+          const rawText = await res.text().catch(() => '');
+          errorMsg = rawText.slice(0, 160);
         }
-        throw new Error(errJson.error || `Server responded with status ${res.status}`);
+        if (res.status === 404) {
+          throw new Error('Backend API not found (HTTP 404). Please verify that your API server is reachable.');
+        }
+        throw new Error(errorMsg || `Server responded with status ${res.status}`);
       }
 
       const data = await res.json();

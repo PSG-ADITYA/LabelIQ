@@ -4,7 +4,6 @@ import multer from 'multer';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import Tesseract from 'tesseract.js';
 import { initDatabase } from './db/database';
 import { seedDemoData } from './db/seed';
 import { dataStore } from './db/store';
@@ -82,6 +81,15 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// URL Normalization Middleware
+// Ensures all routes match whether Vercel preserves or strips /api prefix
+app.use((req: Request, _res: Response, next: express.NextFunction) => {
+  if (req.url && !req.url.startsWith('/api') && req.url !== '/') {
+    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  }
+  next();
+});
+
 // Multer memory storage to avoid keeping files on disk indefinitely
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -97,6 +105,21 @@ const upload = multer({
     }
   },
 });
+
+// Safe upload wrapper that catches multer errors and skips non-multipart requests
+const safeUpload = (fieldName: string) => (req: Request, res: Response, next: express.NextFunction) => {
+  const contentType = (req.headers['content-type'] || '').toLowerCase();
+  if (!contentType.includes('multipart/form-data')) {
+    return next();
+  }
+  upload.single(fieldName)(req, res, (err) => {
+    if (err) {
+      console.warn(`[Upload] File upload warning on ${fieldName}:`, err.message);
+      return res.status(400).json({ error: err.message || 'File upload parsing failed' });
+    }
+    next();
+  });
+};
 
 // Regulatory engine metadata with official Gazette references
 export const REGULATORY_METADATA = {
@@ -580,7 +603,7 @@ app.get('/api/database/backup', async (_req: Request, res: Response): Promise<vo
 // 6.5 NATURAL LANGUAGE AI LABEL DRAFT GENERATION
 // Transforms farmer/producer natural description into structured label draft
 // ============================================================================
-app.post('/api/ai/draft', upload.single('supportFile'), async (req: Request, res: Response): Promise<void> => {
+app.post('/api/ai/draft', safeUpload('supportFile'), async (req: Request, res: Response): Promise<void> => {
   try {
     const rawDescription = (req.body?.description || req.body?.userInputText || '').trim();
     const category = (req.body?.category || 'General Packaged Food').trim();
@@ -596,7 +619,11 @@ app.post('/api/ai/draft', upload.single('supportFile'), async (req: Request, res
       }
     }
 
-    if (!rawDescription && !req.file && Object.keys(knownFields).length === 0) {
+    const attachedFile = req.file
+      ? { mimetype: req.file.mimetype, base64: req.file.buffer.toString('base64') }
+      : (req.body?.file?.base64 ? { mimetype: req.body.file.mimetype || 'image/jpeg', base64: req.body.file.base64 } : null);
+
+    if (!rawDescription && !attachedFile && Object.keys(knownFields).length === 0) {
       res.status(400).json({ error: 'Please provide a product description, uploaded recipe/label document, or known product fields.' });
       return;
     }
@@ -682,11 +709,11 @@ Return ONLY pure JSON without markdown backticks.`;
         }
         userContentParts.push({ text: `${systemPrompt}\n\n${contextText}` });
 
-        if (req.file) {
+        if (attachedFile) {
           userContentParts.push({
             inline_data: {
-              mime_type: req.file.mimetype,
-              data: req.file.buffer.toString('base64'),
+              mime_type: attachedFile.mimetype,
+              data: attachedFile.base64,
             }
           });
         }
@@ -709,7 +736,7 @@ Return ONLY pure JSON without markdown backticks.`;
                   contents: [{ parts: userContentParts }],
                   generationConfig: { response_mime_type: 'application/json', temperature: 0.2 }
                 }),
-                signal: AbortSignal.timeout(28000),
+                signal: AbortSignal.timeout(9000),
               }
             );
 
@@ -902,7 +929,7 @@ Return ONLY pure JSON without markdown backticks.`;
 // ============================================================================
 // 7. DUAL-ENGINE OCR DOCUMENT SCANNING
 // ============================================================================
-app.post('/api/scan', upload.single('labelFile'), async (req: Request, res: Response): Promise<void> => {
+app.post('/api/scan', safeUpload('labelFile'), async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.file) {
       res.status(400).json({ error: 'No label image or PDF file uploaded.' });
@@ -1064,6 +1091,7 @@ RULES:
     if (!isPdf && !process.env.VERCEL) {
       console.log(`[Scan] Performing genuine local OCR on ${req.file.originalname} using Tesseract.js...`);
       try {
+        const { default: Tesseract } = await import('tesseract.js');
         const ocrResult = await Tesseract.recognize(req.file.buffer, 'eng');
         const rawText = ocrResult.data.text ? ocrResult.data.text.trim() : '';
         const ocrConfidence = ocrResult.data.confidence || 0;

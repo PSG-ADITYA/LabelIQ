@@ -1,21 +1,31 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { createRequire } from 'module';
 
+const require = createRequire(import.meta.url);
 const DB_PATH = path.resolve(process.cwd(), 'labeliq.db');
 
-let _sqliteInstance: Database.Database | null = null;
+let _sqliteInstance: any = null;
 
-function getSqliteInstance(): Database.Database {
+function getSqliteInstance(): any {
+  if (process.env.VERCEL) {
+    throw new Error('[Database] Local SQLite is disabled in Vercel serverless environment. Please use Supabase.');
+  }
   if (!_sqliteInstance) {
-    _sqliteInstance = new Database(DB_PATH);
-    _sqliteInstance.pragma('journal_mode = WAL');
-    _sqliteInstance.pragma('foreign_keys = ON');
+    try {
+      const Database = require('better-sqlite3');
+      _sqliteInstance = new Database(DB_PATH);
+      _sqliteInstance.pragma('journal_mode = WAL');
+      _sqliteInstance.pragma('foreign_keys = ON');
+    } catch (err: any) {
+      console.error('[Database] Failed to initialize SQLite:', err.message);
+      throw err;
+    }
   }
   return _sqliteInstance;
 }
 
-export const db: Database.Database = new Proxy({} as any, {
+export const db: any = new Proxy({} as any, {
   get(_target, prop) {
     const instance = getSqliteInstance();
     const val = (instance as any)[prop];
