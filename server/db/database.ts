@@ -4,13 +4,33 @@ import fs from 'fs';
 
 const DB_PATH = path.resolve(process.cwd(), 'labeliq.db');
 
-export const db: Database.Database = new Database(DB_PATH);
+let _sqliteInstance: Database.Database | null = null;
 
-// Enable WAL mode for high concurrency and foreign keys
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+function getSqliteInstance(): Database.Database {
+  if (!_sqliteInstance) {
+    _sqliteInstance = new Database(DB_PATH);
+    _sqliteInstance.pragma('journal_mode = WAL');
+    _sqliteInstance.pragma('foreign_keys = ON');
+  }
+  return _sqliteInstance;
+}
+
+export const db: Database.Database = new Proxy({} as any, {
+  get(_target, prop) {
+    const instance = getSqliteInstance();
+    const val = (instance as any)[prop];
+    if (typeof val === 'function') {
+      return val.bind(instance);
+    }
+    return val;
+  }
+});
 
 export function initDatabase(): void {
+  if (process.env.VERCEL) {
+    console.log('[Database] Skipping local SQLite initialization in Vercel serverless environment.');
+    return;
+  }
   console.log(`[Database] Initializing SQLite database at ${DB_PATH}...`);
 
   db.exec(`

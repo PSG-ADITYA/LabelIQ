@@ -5,8 +5,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import Tesseract from 'tesseract.js';
-import { db, initDatabase } from './db/database';
+import { initDatabase } from './db/database';
 import { seedDemoData } from './db/seed';
+import { dataStore } from './db/store';
 import { computeTemplateRecommendations, compareReferenceLabel } from './recommendationEngine';
 import { logDatabaseMode, testSupabaseConnection, getSupabaseConfig } from './db/supabaseClient';
 import { explainIngredient, INGREDIENT_DATABASE } from '../src/data/ingredientDatabase';
@@ -59,9 +60,11 @@ if (!loadedLabelIq) {
 // Log database operating mode (SQLite vs Supabase dual-persistence)
 logDatabaseMode();
 
-// Initialize SQLite database schema and seed authentic demo data
-initDatabase();
-seedDemoData(false);
+// Initialize SQLite database schema and seed authentic demo data if running locally
+if (!process.env.VERCEL) {
+  initDatabase();
+  seedDemoData(false);
+}
 
 // Verified Gemini Models supported by Google AI Studio
 // gemini-3.5-flash-lite and gemini-flash-lite-latest are confirmed active and quota-ready
@@ -273,150 +276,31 @@ app.get('/api/ai/test', async (_req: Request, res: Response): Promise<void> => {
 // ============================================================================
 // 3. PRODUCT PROFILES & RECIPE VERSIONS CRUD
 // ============================================================================
-app.get('/api/products', (_req: Request, res: Response) => {
+app.get('/api/products', async (_req: Request, res: Response) => {
   try {
-    const products = db.prepare(`
-      SELECT p.*,
-        (SELECT COUNT(*) FROM product_variants v WHERE v.product_id = p.id) as variant_count,
-        (SELECT COUNT(*) FROM recipe_versions r WHERE r.product_id = p.id) as version_count,
-        (SELECT COUNT(*) FROM production_batches b WHERE b.product_id = p.id) as batch_count,
-        (SELECT version_number FROM recipe_versions r WHERE r.product_id = p.id AND r.is_active = 1 LIMIT 1) as active_version
-      FROM products p
-      ORDER BY p.updated_at DESC
-    `).all();
-
+    const products = await dataStore.getProducts();
     res.json({ success: true, count: products.length, products });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/products/:id', (req: Request, res: Response): void => {
+app.get('/api/products/:id', async (req: Request, res: Response): Promise<void> => {
   try {
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id) as any;
+    const product = await dataStore.getProduct(req.params.id);
     if (!product) {
       res.status(404).json({ error: 'Product not found.' });
       return;
     }
-
-    const variants = db.prepare('SELECT * FROM product_variants WHERE product_id = ?').all(product.id);
-    const recipeVersions = db.prepare('SELECT * FROM recipe_versions WHERE product_id = ? ORDER BY version_number ASC').all(product.id) as any[];
-
-    // Attach ingredients, allergens, and nutrition to each recipe version
-    for (const rv of recipeVersions) {
-      rv.ingredients = db.prepare('SELECT * FROM recipe_ingredients WHERE recipe_version_id = ? ORDER BY sort_order ASC').all(rv.id);
-      rv.allergenDeclarations = db.prepare('SELECT * FROM allergen_declarations WHERE recipe_version_id = ?').all(rv.id);
-      rv.nutrition = db.prepare('SELECT * FROM nutrition_records WHERE recipe_version_id = ?').get(rv.id);
-    }
-
-    const labelDesigns = db.prepare('SELECT * FROM label_designs WHERE product_id = ?').all(product.id);
-    const batches = db.prepare('SELECT * FROM production_batches WHERE product_id = ? ORDER BY created_at DESC').all(product.id);
-
-    res.json({
-      success: true,
-      product: {
-        ...product,
-        variants,
-        recipeVersions,
-        labelDesigns,
-        batches,
-      }
-    });
+    res.json({ success: true, product });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/products', (req: Request, res: Response) => {
+app.post('/api/products', async (req: Request, res: Response): Promise<void> => {
   try {
-    const {
-      brandName, productName, category, subcategory, jurisdiction = 'FSSAI (India)',
-      description, dietaryClassification = 'veg', isVegetarian = 1, fssaiLicense,
-      storageInstructions, directionsForUse, variants = [], ingredients = [], nutrition = {}
-    } = req.body;
-
-    const productId = `prod-${Date.now()}`;
-    const versionId = `rcp-${Date.now()}`;
-
-    const tx = db.transaction(() => {
-      // 1. Insert product
-      db.prepare(`
-        INSERT INTO products (
-          id, workspace_id, brand_name, product_name, category, subcategory,
-          jurisdiction, description, dietary_classification, is_vegetarian,
-          fssai_license, storage_instructions, directions_for_use, status, is_demo
-        ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0)
-      `).run(
-        productId, brandName || 'Brand Name', productName || 'New Product', category || 'General Packaged Food',
-        subcategory || '', jurisdiction, description || '', dietaryClassification, isVegetarian ? 1 : 0,
-        fssaiLicense || '', storageInstructions || 'Store in a cool and dry place.', directionsForUse || ''
-      );
-
-      // 2. Insert primary packaging variant
-      const defaultVariant = variants[0] || {
-        variantName: 'Standard Pack',
-        netQuantity: 400,
-        netQuantityUnit: 'g',
-        packagingFormat: 'Glass Jar',
-        barcodeEan13: '8901234567890',
-        widthMm: 120,
-        heightMm: 75
-      };
-
-      const variantId = `var-${Date.now()}`;
-      db.prepare(`
-        INSERT INTO product_variants (
-          id, product_id, sku, variant_name, net_quantity, net_quantity_unit,
-          drained_weight, packaging_format, barcode_ean13, default_width_mm, default_height_mm
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        variantId, productId, defaultVariant.sku || `SKU-${Date.now().toString().slice(-6)}`,
-        defaultVariant.variantName, defaultVariant.netQuantity, defaultVariant.netQuantityUnit,
-        defaultVariant.drainedWeight || null, defaultVariant.packagingFormat,
-        defaultVariant.barcodeEan13, defaultVariant.widthMm || 120, defaultVariant.heightMm || 75
-      );
-
-      // 3. Insert initial recipe version (v1.0)
-      db.prepare(`
-        INSERT INTO recipe_versions (id, product_id, version_number, version_tag, change_summary, is_active)
-        VALUES (?, ?, 1, 'v1.0-Initial', 'Initial product formulation.', 1)
-      `).run(versionId, productId);
-
-      // 4. Insert ingredients
-      const insertIng = db.prepare(`
-        INSERT INTO recipe_ingredients (id, recipe_version_id, sort_order, name, percentage, is_allergen, source_note)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      ingredients.forEach((ing: any, idx: number) => {
-        insertIng.run(
-          `ing-${Date.now()}-${idx}`, versionId, idx + 1,
-          ing.name || 'Ingredient', ing.percentage || '', ing.isAllergen ? 1 : 0, ing.sourceNote || ''
-        );
-      });
-
-      // 5. Insert nutrition
-      db.prepare(`
-        INSERT INTO nutrition_records (
-          id, recipe_version_id, serving_basis, serving_size, energy_kcal, protein_g,
-          carbohydrates_g, total_sugars_g, added_sugars_g, total_fat_g, saturated_fat_g,
-          trans_fat_g, sodium_mg, data_source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        `nut-${Date.now()}`, versionId, nutrition.servingBasis || 'per 100g', nutrition.servingSize || '100g',
-        nutrition.energyKcal ?? null, nutrition.proteinG ?? null, nutrition.carbohydratesG ?? null,
-        nutrition.totalSugarsG ?? null, nutrition.addedSugarsG ?? null, nutrition.totalFatG ?? null,
-        nutrition.saturatedFatG ?? null, nutrition.transFatG ?? null, nutrition.sodiumMg ?? null,
-        nutrition.dataSource || 'Manufacturer Specification'
-      );
-
-      // 6. Insert audit event
-      db.prepare(`
-        INSERT INTO audit_events (id, entity_type, entity_id, action, summary)
-        VALUES (?, 'product', ?, 'CREATE', ?)
-      `).run(`aud-${Date.now()}`, productId, `Created product "${productName}" with initial recipe version v1.0`);
-    });
-
-    tx();
+    const { productId } = await dataStore.createProduct(req.body);
     res.status(201).json({ success: true, productId });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -424,69 +308,10 @@ app.post('/api/products', (req: Request, res: Response) => {
 });
 
 // Create new recipe version for a product (Formulation Upgrade)
-app.post('/api/products/:id/versions', (req: Request, res: Response): void => {
+app.post('/api/products/:id/versions', async (req: Request, res: Response): Promise<void> => {
   try {
-    const productId = req.params.id;
-    const { versionTag, changeSummary, ingredients = [], nutrition = {}, allergenStatement = '' } = req.body;
-
-    const latest = db.prepare(`
-      SELECT MAX(version_number) as max_v FROM recipe_versions WHERE product_id = ?
-    `).get(productId) as { max_v: number };
-
-    const nextVersionNum = (latest?.max_v || 1) + 1;
-    const newVersionId = `rcp-${Date.now()}`;
-
-    const tx = db.transaction(() => {
-      // Deactivate older versions
-      db.prepare('UPDATE recipe_versions SET is_active = 0 WHERE product_id = ?').run(productId);
-
-      // Insert new version
-      db.prepare(`
-        INSERT INTO recipe_versions (id, product_id, version_number, version_tag, change_summary, is_active)
-        VALUES (?, ?, ?, ?, ?, 1)
-      `).run(newVersionId, productId, nextVersionNum, versionTag || `v${nextVersionNum}.0`, changeSummary || 'Formulation revision');
-
-      // Insert ingredients
-      const insertIng = db.prepare(`
-        INSERT INTO recipe_ingredients (id, recipe_version_id, sort_order, name, percentage, is_allergen, source_note)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      ingredients.forEach((ing: any, idx: number) => {
-        insertIng.run(`ing-${Date.now()}-${idx}`, newVersionId, idx + 1, ing.name, ing.percentage || '', ing.isAllergen ? 1 : 0, ing.sourceNote || '');
-      });
-
-      // Insert allergen declaration
-      if (allergenStatement) {
-        db.prepare(`
-          INSERT INTO allergen_declarations (id, recipe_version_id, declaration_text, cross_contact_notes)
-          VALUES (?, ?, ?, ?)
-        `).run(`alg-${Date.now()}`, newVersionId, allergenStatement, '');
-      }
-
-      // Insert nutrition
-      db.prepare(`
-        INSERT INTO nutrition_records (
-          id, recipe_version_id, serving_basis, serving_size, energy_kcal, protein_g,
-          carbohydrates_g, total_sugars_g, added_sugars_g, total_fat_g, saturated_fat_g,
-          trans_fat_g, sodium_mg, data_source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        `nut-${Date.now()}`, newVersionId, nutrition.servingBasis || 'per 100g', nutrition.servingSize || '100g',
-        nutrition.energyKcal ?? null, nutrition.proteinG ?? null, nutrition.carbohydratesG ?? null,
-        nutrition.totalSugarsG ?? null, nutrition.addedSugarsG ?? null, nutrition.totalFatG ?? null,
-        nutrition.saturatedFatG ?? null, nutrition.transFatG ?? null, nutrition.sodiumMg ?? null,
-        nutrition.dataSource || 'Recipe Formulation Update'
-      );
-
-      // Audit event
-      db.prepare(`
-        INSERT INTO audit_events (id, entity_type, entity_id, action, summary)
-        VALUES (?, 'recipe', ?, 'VERSION_UPGRADE', ?)
-      `).run(`aud-${Date.now()}`, newVersionId, `Created recipe version v${nextVersionNum}.0: ${changeSummary || 'Reformulation'}`);
-    });
-
-    tx();
-    res.json({ success: true, versionId: newVersionId, versionNumber: nextVersionNum });
+    const result = await dataStore.createRecipeVersion(req.params.id, req.body);
+    res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -495,96 +320,29 @@ app.post('/api/products/:id/versions', (req: Request, res: Response): void => {
 // ============================================================================
 // 4. PRODUCTION BATCHES CRUD & REGENERATION
 // ============================================================================
-app.get('/api/batches', (_req: Request, res: Response) => {
+app.get('/api/batches', async (_req: Request, res: Response) => {
   try {
-    const batches = db.prepare(`
-      SELECT b.*,
-        p.product_name,
-        p.brand_name,
-        p.category,
-        COALESCE(v.variant_name, 'Standard Pack') AS variant_name,
-        COALESCE(v.net_quantity, 400) AS net_quantity,
-        COALESCE(v.net_quantity_unit, 'g') AS net_quantity_unit,
-        COALESCE(v.packaging_format, 'Glass Jar') AS packaging_format,
-        v.barcode_ean13,
-        r.version_tag
-      FROM production_batches b
-      JOIN products p ON b.product_id = p.id
-      LEFT JOIN product_variants v ON b.variant_id = v.id
-      LEFT JOIN recipe_versions r ON b.recipe_version_id = r.id
-      ORDER BY b.mfg_date DESC
-    `).all();
-
+    const batches = await dataStore.getBatches();
     res.json({ success: true, count: batches.length, batches });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/batches', (req: Request, res: Response): void => {
+app.post('/api/batches', async (req: Request, res: Response): Promise<void> => {
   try {
     const productId = req.body.productId || req.body.product_id;
-    let variantId = req.body.variantId || req.body.variant_id;
-    const recipeVersionId = req.body.recipeVersionId || req.body.recipe_version_id;
-    const labelDesignId = req.body.labelDesignId || req.body.label_design_id;
     const batchNumber = req.body.batchNumber || req.body.batch_number;
     const mfgDate = req.body.mfgDate || req.body.mfg_date;
     const expiryDate = req.body.expiryDate || req.body.expiry_date;
-    const bestBeforeMonths = req.body.bestBeforeMonths ?? req.body.best_before_months ?? 12;
-    const batchSizeQuantity = req.body.batchSizeQuantity ?? req.body.batch_size_quantity ?? 0;
-    const batchSizeUnit = req.body.batchSizeUnit || req.body.batch_size_unit || 'kg';
     const plannedUnits = req.body.plannedUnits ?? req.body.planned_units;
-    const notes = req.body.notes || '';
-    const variantName = req.body.variantName || req.body.variant_name;
-    const netQuantity = req.body.netQuantity ?? req.body.net_quantity ?? 400;
-    const netQuantityUnit = req.body.netQuantityUnit || req.body.net_quantity_unit || 'g';
-    const packagingFormat = req.body.packagingFormat || req.body.packaging_format || 'Glass Jar';
 
     if (!productId || !batchNumber || !mfgDate || !expiryDate || !plannedUnits) {
       res.status(400).json({ error: 'Missing mandatory batch fields (productId, batchNumber, mfgDate, expiryDate, plannedUnits).' });
       return;
     }
 
-    // Auto-resolve or create variant so variant_id is never orphaned
-    if (!variantId) {
-      const existingVariant = db.prepare('SELECT id FROM product_variants WHERE product_id = ? LIMIT 1').get(productId) as any;
-      if (existingVariant) {
-        variantId = existingVariant.id;
-      } else {
-        variantId = `var-${Date.now()}`;
-        db.prepare(`
-          INSERT INTO product_variants (id, product_id, variant_name, net_quantity, net_quantity_unit, packaging_format, barcode_ean13)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          variantId,
-          productId,
-          variantName || `${netQuantity}${netQuantityUnit} Standard`,
-          netQuantity,
-          netQuantityUnit,
-          packagingFormat,
-          '8901030382914'
-        );
-      }
-    }
-
-    const batchId = `batch-${Date.now()}`;
-    db.prepare(`
-      INSERT INTO production_batches (
-        id, product_id, variant_id, recipe_version_id, label_design_id,
-        batch_number, mfg_date, expiry_date, best_before_months,
-        batch_size_quantity, batch_size_unit, planned_units, packaged_units, status, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'Planned', ?)
-    `).run(
-      batchId, productId, variantId, recipeVersionId || null, labelDesignId || null,
-      batchNumber, mfgDate, expiryDate, bestBeforeMonths,
-      batchSizeQuantity, batchSizeUnit, plannedUnits, notes
-    );
-
-    db.prepare(`
-      INSERT INTO audit_events (id, entity_type, entity_id, action, summary)
-      VALUES (?, 'batch', ?, 'CREATE', ?)
-    `).run(`aud-${Date.now()}`, batchId, `Created production batch ${batchNumber} (${plannedUnits} units)`);
-
+    const { batchId } = await dataStore.createBatch(req.body);
     res.status(201).json({ success: true, batchId });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -594,83 +352,26 @@ app.post('/api/batches', (req: Request, res: Response): void => {
 // ============================================================================
 // 4B. PUBLIC TRACEABILITY & VERIFICATION (QR DESTINATION)
 // ============================================================================
-app.get('/api/public/verify/:identifier', (req: Request, res: Response): void => {
+app.get('/api/public/verify/:identifier', async (req: Request, res: Response): Promise<void> => {
   try {
-    const id = req.params.identifier;
-    const batch = db.prepare(`
-      SELECT b.*,
-        p.product_name,
-        p.brand_name,
-        p.category,
-        p.dietary_classification,
-        p.fssai_license,
-        p.storage_instructions,
-        p.directions_for_use,
-        COALESCE(v.variant_name, 'Standard Pack') AS variant_name,
-        COALESCE(v.net_quantity, 400) AS net_quantity,
-        COALESCE(v.net_quantity_unit, 'g') AS net_quantity_unit,
-        COALESCE(v.packaging_format, 'Glass Jar') AS packaging_format,
-        v.barcode_ean13,
-        r.version_tag
-      FROM production_batches b
-      JOIN products p ON b.product_id = p.id
-      LEFT JOIN product_variants v ON b.variant_id = v.id
-      LEFT JOIN recipe_versions r ON b.recipe_version_id = r.id
-      WHERE b.batch_number = ? OR b.id = ?
-    `).get(id, id) as any;
-
-    if (!batch) {
-      const product = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
-      if (!product) {
-        res.status(404).json({ success: false, message: 'Batch or product record not found in system.' });
-        return;
-      }
+    const result = await dataStore.getPublicVerify(req.params.identifier);
+    if (!result) {
+      res.status(404).json({ success: false, message: 'Batch or product record not found in system.' });
+      return;
+    }
+    if (result.type === 'batch') {
+      res.json({
+        success: true,
+        type: 'batch',
+        batch: result
+      });
+    } else {
       res.json({
         success: true,
         type: 'product',
-        product: {
-          productName: product.product_name,
-          brandName: product.brand_name,
-          category: product.category,
-          fssaiLicense: product.fssai_license,
-          storageInstructions: product.storage_instructions,
-          dietaryClassification: product.dietary_classification,
-          verifiedAuthentic: true,
-          verificationSource: 'LabelIQ Studio Central Registry'
-        }
+        product: result
       });
-      return;
     }
-
-    let ingredients: any[] = [];
-    let allergens: any[] = [];
-    if (batch.recipe_version_id) {
-      ingredients = db.prepare('SELECT name, percentage, is_allergen FROM recipe_ingredients WHERE recipe_version_id = ? ORDER BY sort_order ASC').all(batch.recipe_version_id);
-      allergens = db.prepare('SELECT declaration_text FROM allergen_declarations WHERE recipe_version_id = ?').all(batch.recipe_version_id);
-    }
-
-    res.json({
-      success: true,
-      type: 'batch',
-      batch: {
-        batchNumber: batch.batch_number,
-        productName: batch.product_name,
-        brandName: batch.brand_name,
-        category: batch.category,
-        packaging: `${batch.net_quantity}${batch.net_quantity_unit} ${batch.packaging_format}`,
-        mfgDate: batch.mfg_date,
-        expiryDate: batch.expiry_date,
-        bestBeforeMonths: batch.best_before_months,
-        status: batch.status,
-        fssaiLicense: batch.fssai_license,
-        storageInstructions: batch.storage_instructions,
-        ingredients,
-        allergens: allergens.map((a: any) => a.declaration_text),
-        verifiedAuthentic: true,
-        registeredAt: batch.created_at,
-        registryHost: 'LabelIQ Studio Central Registry'
-      }
-    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -679,100 +380,16 @@ app.get('/api/public/verify/:identifier', (req: Request, res: Response): void =>
 // ============================================================================
 // 4.5 PUBLIC PRODUCT STORYTELLING & TERROIR REGISTRY
 // ============================================================================
-app.get('/api/public/story/:id', (req: Request, res: Response): void => {
+app.get('/api/public/story/:id', async (req: Request, res: Response): Promise<void> => {
   try {
-    const id = req.params.id;
-    const batch = db.prepare(`
-      SELECT b.*,
-        p.product_name, p.brand_name, p.category, p.description,
-        p.dietary_classification, p.fssai_license, p.storage_instructions, p.directions_for_use,
-        COALESCE(v.variant_name, 'Standard Pack') AS variant_name,
-        COALESCE(v.net_quantity, 400) AS net_quantity,
-        COALESCE(v.net_quantity_unit, 'g') AS net_quantity_unit,
-        COALESCE(v.packaging_format, 'Glass Jar') AS packaging_format,
-        v.barcode_ean13, r.version_tag
-      FROM production_batches b
-      JOIN products p ON b.product_id = p.id
-      LEFT JOIN product_variants v ON b.variant_id = v.id
-      LEFT JOIN recipe_versions r ON b.recipe_version_id = r.id
-      WHERE b.batch_number = ? OR b.id = ?
-    `).get(id, id) as any;
-
-    let targetItem = batch;
-    if (!targetItem) {
-      targetItem = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
-    }
-
-    if (!targetItem) {
+    const story = await dataStore.getPublicStory(req.params.id);
+    if (!story) {
       res.status(404).json({ success: false, message: 'Story record not found in system.' });
       return;
     }
-
-    let ingredients: any[] = [];
-    if (batch?.recipe_version_id) {
-      ingredients = db.prepare('SELECT name, percentage, is_allergen FROM recipe_ingredients WHERE recipe_version_id = ? ORDER BY sort_order ASC').all(batch.recipe_version_id);
-    }
-
-    const explainedIngredients = (ingredients.length > 0 ? ingredients : [
-      { name: 'Raw Green Mango', percentage: '62%', is_allergen: 0 },
-      { name: 'Cold-Pressed Mustard Oil', percentage: '18%', is_allergen: 1 },
-      { name: 'Fenugreek Seeds', percentage: '5%', is_allergen: 0 },
-      { name: 'Rock Salt', percentage: '7%', is_allergen: 0 }
-    ]).map((ing: any) => ({
-      ...ing,
-      explanation: explainIngredient(ing.name)
-    }));
-
-    const cat = (targetItem.category || '').toLowerCase();
-    const isPickle = cat.includes('pickle');
-    const isHoney = cat.includes('honey');
-
-    const tasteAndOrigin = {
-      theme: isPickle ? 'traditional-indian' : (isHoney ? 'organic' : 'artisanal'),
-      regionalOrigin: isPickle ? 'Pahadi Ridge & Doon Valley' : (isHoney ? 'Kinnaur Valley, Himachal Pradesh (Elevation 2,200m)' : 'Heritage Agricultural Belts of India'),
-      producerStory: isPickle 
-        ? 'Small-batch artisanal pickle prepared by women-led farm collective using sun-ripened orchard mangoes, cold-pressed mustard oil, and time-honored slow sun curing.'
-        : (isHoney 
-          ? 'Single-origin wild multiflora honey harvested sustainably from high-altitude Himalayan flora without heat processing or ultra-filtration.'
-          : 'Grown by dedicated smallholder farmers committed to regenerative agriculture, chemical-free curing, and traditional food stewardship.'),
-      tastingNotes: isPickle 
-        ? ['Sharp Pungency', 'Tangy Raw Mango', 'Warm Methi & Hing Aroma']
-        : (isHoney 
-          ? ['Delicate Wildflower', 'Light Amber Sweetness', 'Warm Herbal Undertone']
-          : ['Rich Natural Aroma', 'Unprocessed Pure Flavor']),
-      aromaProfile: isPickle ? 'Zesty, mustard-spice pungency' : (isHoney ? 'Floral mountain bouquet' : 'Deep earthy authentic spice'),
-      texture: isPickle ? 'Crisp mango chunks in rich spiced oil' : (isHoney ? 'Velvety raw crystallizing flow' : 'Finely stone-milled powder'),
-      servingSuggestions: isPickle 
-        ? 'Enjoy alongside warm parathas, khichdi, or steamed rice with a dollop of desi ghee.'
-        : (isHoney 
-          ? 'Drizzle over warm sourdough, pair with herbal teas, or enjoy one spoonful directly each morning.'
-          : 'Season dishes during final tempering to preserve delicate volatile aromas.'),
-      verifiedCertificates: [
-        { title: 'FSSAI License Active', verified: true, authority: 'FSSAI Statutory Registry' },
-        { title: 'Pesticide & Heavy Metal Tested', verified: true, authority: 'NABL Accredited Analytical Lab' },
-        { title: 'Zero Artificial Colorants (Tartrazine Free)', verified: true, authority: 'Batch Quality Release' }
-      ]
-    };
-
     res.json({
       success: true,
-      story: {
-        productName: targetItem.product_name || targetItem.productName || 'Artisanal Food Specialty',
-        brandName: targetItem.brand_name || targetItem.brandName || 'Heritage Producer',
-        category: targetItem.category || 'General Packaged Food',
-        batchNumber: targetItem.batch_number || 'REG-MASTER',
-        mfgDate: targetItem.mfg_date || targetItem.mfgDate || '2024-10-15',
-        expiryDate: targetItem.expiry_date || targetItem.expiryDate || '2025-10-15',
-        packaging: targetItem.packaging || `${targetItem.net_quantity || 400}${targetItem.net_quantity_unit || 'g'} ${targetItem.packaging_format || 'Glass Jar'}`,
-        fssaiLicense: targetItem.fssai_license || targetItem.fssaiLicense || '10022099001144',
-        storageInstructions: targetItem.storage_instructions || targetItem.storageInstructions || 'Store in a cool, dry place.',
-        directionsForUse: targetItem.directions_for_use || targetItem.directionsForUse || 'Ready to consume.',
-        ingredients: explainedIngredients,
-        tasteAndOrigin,
-        verifiedCertificates: tasteAndOrigin.verifiedCertificates,
-        availableLanguages: SUPPORTED_INDIAN_LANGUAGES,
-        verifiedAuthentic: true
-      }
+      story
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -893,50 +510,20 @@ ${JSON.stringify(fields, null, 2)}`;
   }
 });
 
-app.put('/api/batches/:id', (req: Request, res: Response): void => {
+app.put('/api/batches/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const { status, packagedUnits, notes } = req.body;
-    db.prepare(`
-      UPDATE production_batches
-      SET status = COALESCE(?, status),
-          packaged_units = COALESCE(?, packaged_units),
-          notes = COALESCE(?, notes),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(status, packagedUnits, notes, req.params.id);
-
+    await dataStore.updateBatch(req.params.id, { status, packagedUnits, notes });
     res.json({ success: true, message: 'Batch updated successfully.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/batches/:id/duplicate', (req: Request, res: Response): void => {
+app.post('/api/batches/:id/duplicate', async (req: Request, res: Response): Promise<void> => {
   try {
-    const source = db.prepare('SELECT * FROM production_batches WHERE id = ?').get(req.params.id) as any;
-    if (!source) {
-      res.status(404).json({ error: 'Source batch not found.' });
-      return;
-    }
-
-    const newBatchId = `batch-${Date.now()}`;
-    const newBatchNumber = `${source.batch_number}-R${Date.now().toString().slice(-4)}`;
-    const today = new Date().toISOString().split('T')[0];
-
-    db.prepare(`
-      INSERT INTO production_batches (
-        id, product_id, variant_id, recipe_version_id, label_design_id,
-        batch_number, mfg_date, expiry_date, best_before_months,
-        batch_size_quantity, batch_size_unit, planned_units, packaged_units, status, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'Planned', ?)
-    `).run(
-      newBatchId, source.product_id, source.variant_id, source.recipe_version_id, source.label_design_id,
-      newBatchNumber, today, source.expiry_date, source.best_before_months,
-      source.batch_size_quantity, source.batch_size_unit, source.planned_units,
-      `Duplicated from batch ${source.batch_number}. Ready for new run.`
-    );
-
-    res.json({ success: true, newBatchId, newBatchNumber });
+    const result = await dataStore.duplicateBatch(req.params.id);
+    res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -969,30 +556,21 @@ app.post('/api/reference-comparison', (req: Request, res: Response) => {
 // ============================================================================
 app.post('/api/database/seed-demo', (_req: Request, res: Response) => {
   try {
-    seedDemoData(true);
-    res.json({ success: true, message: 'Demo data reset and seeded successfully.' });
+    if (!process.env.VERCEL) {
+      seedDemoData(true);
+      res.json({ success: true, message: 'Demo data reset and seeded successfully.' });
+    } else {
+      res.json({ success: true, message: 'Demo seeding disabled on Vercel serverless environment.' });
+    }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/database/backup', (_req: Request, res: Response) => {
+app.get('/api/database/backup', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const products = db.prepare('SELECT * FROM products').all();
-    const variants = db.prepare('SELECT * FROM product_variants').all();
-    const recipeVersions = db.prepare('SELECT * FROM recipe_versions').all();
-    const ingredients = db.prepare('SELECT * FROM recipe_ingredients').all();
-    const nutrition = db.prepare('SELECT * FROM nutrition_records').all();
-    const batches = db.prepare('SELECT * FROM production_batches').all();
-    const designs = db.prepare('SELECT * FROM label_designs').all();
-
-    res.json({
-      exportTimestamp: new Date().toISOString(),
-      version: '2.0.0',
-      data: {
-        products, variants, recipeVersions, ingredients, nutrition, batches, designs
-      }
-    });
+    const backup = await dataStore.exportBackup();
+    res.json(backup);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1482,8 +1060,8 @@ RULES:
       }
     }
 
-    // PATH 2: Real Local Tesseract.js OCR Engine (Authentic OCR on image buffers)
-    if (!isPdf) {
+    // PATH 2: Real Local Tesseract.js OCR Engine (Authentic OCR on image buffers for local Node runtime)
+    if (!isPdf && !process.env.VERCEL) {
       console.log(`[Scan] Performing genuine local OCR on ${req.file.originalname} using Tesseract.js...`);
       try {
         const ocrResult = await Tesseract.recognize(req.file.buffer, 'eng');
@@ -1598,6 +1176,18 @@ RULES:
         });
         return;
       }
+    }
+
+    if (process.env.VERCEL) {
+      res.status(200).json({
+        success: false,
+        hasReadableText: false,
+        extractionMethod: 'Vercel Serverless Function',
+        isAiProviderConfigured: Boolean(customKey),
+        message: 'On Vercel serverless functions, label scanning requires GEMINI_API_KEY for Gemini Vision multimodal analysis.',
+        extractedData: null
+      });
+      return;
     }
 
     res.status(400).json({ error: 'Unsupported file processing request.' });
@@ -1788,11 +1378,16 @@ app.use((err: any, _req: Request, res: Response, _next: express.NextFunction) =>
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n==================================================`);
-  console.log(`🚀 LabelIQ Studio Services Initialized`);
-  console.log(`➜ Frontend UI:  http://localhost:5175/`);
-  console.log(`➜ Backend API:  http://localhost:${PORT}/`);
-  console.log(`➜ Regulatory:   ${REGULATORY_METADATA.jurisdiction}`);
-  console.log(`==================================================\n`);
-});
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`\n==================================================`);
+    console.log(`🚀 LabelIQ Studio Services Initialized`);
+    console.log(`➜ Frontend UI:  http://localhost:5175/`);
+    console.log(`➜ Backend API:  http://localhost:${PORT}/`);
+    console.log(`➜ Regulatory:   ${REGULATORY_METADATA.jurisdiction}`);
+    console.log(`==================================================\n`);
+  });
+}
+
+export { app };
+export default app;

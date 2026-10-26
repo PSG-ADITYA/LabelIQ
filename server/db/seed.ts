@@ -1,6 +1,7 @@
 import { db } from './database';
 
 export function seedDemoData(forceReset = false): void {
+  if (process.env.VERCEL) return;
   const existing = db.prepare('SELECT COUNT(*) as count FROM products WHERE is_demo = 1').get() as { count: number };
   if (existing.count > 0 && !forceReset) {
     console.log('[Seed] Demo data already exists. Skipping seed.');
