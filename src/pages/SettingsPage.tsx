@@ -25,6 +25,10 @@ import {
 export const SettingsPage: React.FC = () => {
   const { settings, updateSettings, resetToDemo, showToast, aiConnectionStatus, checkAiConnection, loadBatches } = useLabel();
 
+  // Diagnostics panel is only accessible when explicitly triggered by developer query param (?dev=1 or ?debug=1)
+  const isDeveloperMode = typeof window !== 'undefined' && 
+    (new URLSearchParams(window.location.search).get('dev') === '1' || new URLSearchParams(window.location.search).get('debug') === '1');
+
   const [aiTestResult, setAiTestResult] = useState<AiTestResponse | null>(null);
   const [isTestingAi, setIsTestingAi] = useState<boolean>(false);
   const [isBackingUp, setIsBackingUp] = useState<boolean>(false);
@@ -38,7 +42,7 @@ export const SettingsPage: React.FC = () => {
       setAiTestResult(res);
       await checkAiConnection();
       if (res.status === 'live_authenticated') {
-        showToast('Gemini 3.8 Flash responded successfully!', 'success');
+        showToast(`Gemini AI connection verified (${res.model || 'gemini-3.5-flash-lite'})!`, 'success');
       } else {
         showToast(`AI status: ${res.status}. ${res.message || ''}`, 'warning');
       }
@@ -207,57 +211,60 @@ export const SettingsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Google Gemini AI Vision Configuration & Live Diagnostics */}
-      <div className="bg-white rounded-2xl border border-cream-200 shadow-sm p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-forest-800" />
-            Gemini AI Vision Configuration
-          </h3>
-          <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold border ${
-            aiConnectionStatus?.configured 
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
-              : 'bg-amber-50 text-amber-800 border-amber-200'
-          }`}>
-            {aiConnectionStatus?.configured ? 'Live Authenticated (gemini-3.8-flash)' : 'Local OCR Mode (Tesseract v7)'}
-          </span>
-        </div>
-
-        <p className="text-xs text-slate-600 leading-relaxed">
-          LabelIQ loads the server-side API key strictly from <code className="bg-cream-100 px-1 py-0.5 rounded text-forest-900 font-mono text-[11px]">.env.labeliq</code>. The key is never exposed to the browser bundle or committed to Git.
-        </p>
-
-        <div className="p-4 rounded-xl bg-forest-50/50 border border-forest-200 space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div>
-              <div className="text-xs font-bold text-forest-950">Active AI Model</div>
-              <div className="text-[11px] text-forest-800 font-mono">
-                {aiConnectionStatus?.model || 'models/gemini-3.8-flash'}
-              </div>
-            </div>
-            <button
-              disabled={isTestingAi}
-              onClick={handleRunAiDiagnostic}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-forest-900 hover:bg-forest-800 text-white text-xs font-semibold shadow-xs disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isTestingAi ? 'animate-spin' : ''}`} />
-              Test Live AI Connection
-            </button>
+      {/* DEVELOPER-ONLY DIAGNOSTICS (Rendered ONLY when ?dev=1 or ?debug=1 is explicitly passed in URL) */}
+      {isDeveloperMode && (
+        <div className="bg-white rounded-2xl border-2 border-forest-800 shadow-sm p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-forest-800" />
+              <span>Developer AI Diagnostics</span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 text-limeaccent-300 font-bold">DEV MODE</span>
+            </h3>
+            <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold border ${
+              aiConnectionStatus?.configured 
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}>
+              {aiConnectionStatus?.configured ? `Live Ready (${aiConnectionStatus.model || 'gemini-3.5-flash-lite'})` : 'Local OCR Mode (Tesseract v7)'}
+            </span>
           </div>
 
-          {aiTestResult && (
-            <div className="mt-2 p-3 rounded-lg bg-white border border-forest-200 text-xs space-y-1">
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${aiTestResult.status === 'live_authenticated' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                <span className="font-bold text-slate-900">
-                  Status: {aiTestResult.status} {aiTestResult.latencyMs ? `(${aiTestResult.latencyMs}ms)` : ''}
-                </span>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Developer diagnostics tool for testing server-side Gemini connectivity. Never exposes credentials to browser bundles or public users.
+          </p>
+
+          <div className="p-4 rounded-xl bg-forest-50/50 border border-forest-200 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <div className="text-xs font-bold text-forest-950">Active AI Model</div>
+                <div className="text-[11px] text-forest-800 font-mono">
+                  {aiConnectionStatus?.model || 'gemini-3.5-flash-lite'}
+                </div>
               </div>
-              <p className="text-[11px] text-slate-600">{aiTestResult.message}</p>
+              <button
+                disabled={isTestingAi}
+                onClick={handleRunAiDiagnostic}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-forest-900 hover:bg-forest-800 text-white text-xs font-semibold shadow-xs disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingAi ? 'animate-spin' : ''}`} />
+                Test Live AI Connection
+              </button>
             </div>
-          )}
+
+            {aiTestResult && (
+              <div className="mt-2 p-3 rounded-lg bg-white border border-forest-200 text-xs space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${aiTestResult.status === 'live_authenticated' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span className="font-bold text-slate-900">
+                    Status: {aiTestResult.status} {aiTestResult.latencyMs ? `(${aiTestResult.latencyMs}ms)` : ''}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600">{aiTestResult.message}</p>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* SQLite Database & Audit Records Persistence */}
       <div className="bg-white rounded-2xl border border-cream-200 shadow-sm p-6 space-y-4">

@@ -125,14 +125,14 @@ export const DashboardPage: React.FC = () => {
         {/* Metric 4: AI & OCR Pipeline */}
         <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-2">
           <div className="flex items-center justify-between text-slate-500">
-            <span className="text-xs font-semibold uppercase tracking-wider">OCR Engine</span>
-            <Cpu className="w-4 h-4 text-limeaccent-600" />
+            <span className="text-xs font-semibold uppercase tracking-wider">Recognition Engine</span>
+            <Cpu className="w-4 h-4 text-forest-800" />
           </div>
           <div className="text-sm font-bold text-slate-900">
-            {aiConnectionStatus?.status === 'connected' ? 'Gemini 3.8 Flash' : 'Tesseract.js v7'}
+            {aiConnectionStatus?.status === 'live_authenticated' ? 'Vision AI + OCR' : 'Local OCR (Tesseract)'}
           </div>
           <p className="text-[11px] text-slate-500">
-            {aiConnectionStatus?.status === 'connected' ? 'Live multimodal AI active' : 'Offline local OCR ready'}
+            {aiConnectionStatus?.status === 'live_authenticated' ? 'Multimodal visual analysis ready' : 'Local offline extraction active'}
           </p>
         </div>
       </div>

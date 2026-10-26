@@ -297,6 +297,9 @@ export const ScannerPage: React.FC = () => {
 
       if (!response.ok) {
         const errorJson = await response.json().catch(() => ({}));
+        if (response.status === 404) {
+          throw new Error('Backend API not found (HTTP 404). In production, please set VITE_API_URL to your deployed Express backend.');
+        }
         throw new Error(errorJson.error || `Server returned status ${response.status}`);
       }
 
@@ -593,7 +596,7 @@ export const ScannerPage: React.FC = () => {
           </div>
           <div className="text-slate-500 text-[11px]">
             {aiConnectionStatus?.configured 
-              ? 'Multi-model fallback: gemini-3.5-flash / gemini-3.8-flash' 
+              ? 'Cloud Vision AI + Local Tesseract Dual Pipeline' 
               : 'Works 100% free without API keys'}
           </div>
         </div>

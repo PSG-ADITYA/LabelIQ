@@ -158,6 +158,9 @@ export const AiDraftPage: React.FC = () => {
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
+        if (res.status === 404) {
+          throw new Error('Backend API not found (HTTP 404). In production, please set VITE_API_URL to your deployed Express backend.');
+        }
         throw new Error(errJson.error || `Server responded with status ${res.status}`);
       }
 

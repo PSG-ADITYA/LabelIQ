@@ -64,7 +64,13 @@ initDatabase();
 seedDemoData(false);
 
 // Verified Gemini Models supported by Google AI Studio
-export const CANDIDATE_GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash'];
+// gemini-3.5-flash-lite and gemini-flash-lite-latest are confirmed active and quota-ready
+export const PRIMARY_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+export const CANDIDATE_GEMINI_MODELS = [
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest',
+  'gemini-3.5-flash'
+];
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -145,7 +151,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
     version: '2.0.0',
     database: 'SQLite 3 (better-sqlite3)',
     aiConfigured: hasGeminiKey,
-    activeAiModel: 'gemini-3.5-flash',
+    activeAiModel: PRIMARY_GEMINI_MODEL,
     ocrEngine: 'Tesseract.js v7 + Gemini Vision (Dual-Engine)',
     regulatoryMetadata: REGULATORY_METADATA,
   });
@@ -176,7 +182,7 @@ app.get('/api/ai/test', async (_req: Request, res: Response): Promise<void> => {
     res.json({
       configured: false,
       status: 'missing_key',
-      message: 'No GEMINI_API_KEY configured in .env.labeliq. Operating in offline local Tesseract OCR mode.',
+      message: 'No GEMINI_API_KEY configured in server environment. Operating in offline local Tesseract OCR mode.',
     });
     return;
   }
@@ -218,23 +224,49 @@ app.get('/api/ai/test', async (_req: Request, res: Response): Promise<void> => {
         return;
       } else {
         const errorJson = await testResponse.json().catch(() => ({}));
+        const rawMsg = errorJson.error?.message || 'Gemini API error';
+        let category: 'auth_error' | 'quota_exceeded' | 'model_unavailable' | 'service_unavailable' | 'provider_error' = 'provider_error';
+        let friendlyMsg = rawMsg;
+
+        if (testResponse.status === 401 || testResponse.status === 403) {
+          category = 'auth_error';
+          friendlyMsg = 'Gemini API key is invalid or lacks necessary permissions.';
+        } else if (testResponse.status === 429) {
+          category = 'quota_exceeded';
+          friendlyMsg = 'Gemini free tier rate limit or quota exceeded. Please wait a moment before trying again.';
+        } else if (testResponse.status === 404) {
+          category = 'model_unavailable';
+          friendlyMsg = `Model ${model} is unavailable or retired for this API tier.`;
+        } else if (testResponse.status >= 500) {
+          category = 'service_unavailable';
+          friendlyMsg = 'Google Gemini service is temporarily experiencing high load. Please try again later.';
+        }
+
         lastError = {
           httpStatus: testResponse.status,
-          message: errorJson.error?.message || 'Gemini API error',
+          category,
+          message: friendlyMsg,
+          rawMessage: rawMsg,
           model,
         };
       }
     } catch (err: any) {
-      lastError = { message: err.message, model };
+      lastError = { 
+        httpStatus: 504, 
+        category: 'network_timeout', 
+        message: err.name === 'TimeoutError' ? 'Gemini API request timed out (20s limit).' : (err.message || 'Network connection to Google AI failed.'),
+        model 
+      };
     }
   }
 
   res.status(502).json({
     configured: true,
     status: 'provider_error',
+    category: lastError?.category || 'provider_error',
     httpStatus: lastError?.httpStatus || 500,
     message: lastError?.message || 'Gemini API returned an error response.',
-    details: 'Check quota or model availability in your Google AI Studio project.',
+    failedModel: lastError?.model,
   });
 });
 
