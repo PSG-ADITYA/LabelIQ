@@ -1,13 +1,16 @@
-import { DataStore, SupabaseStore } from './supabaseStore';
-import { SqliteStore } from './sqliteStore';
-import { getSupabaseConfig } from './supabaseClient';
+import { DataStore, SupabaseStore } from './supabaseStore.js';
+import { SqliteStore } from './sqliteStore.js';
+import { getSupabaseConfig } from './supabaseClient.js';
 
 class HybridDataStore implements DataStore {
   private supabaseStore: SupabaseStore | null = null;
   private sqliteStore: SqliteStore | null = null;
   private isSupabasePrimary: boolean = false;
+  private isInitialized: boolean = false;
 
-  constructor() {
+  private initIfNeeded() {
+    if (this.isInitialized) return;
+    this.isInitialized = true;
     const config = getSupabaseConfig();
     const isVercel = Boolean(process.env.VERCEL);
 
@@ -26,16 +29,30 @@ class HybridDataStore implements DataStore {
   }
 
   private async execute<T>(fnName: keyof DataStore, ...args: any[]): Promise<T> {
+    this.initIfNeeded();
     // If Supabase is primary, attempt it first
     if (this.isSupabasePrimary && this.supabaseStore) {
       try {
         const method = (this.supabaseStore as any)[fnName];
         if (typeof method === 'function') {
-          return await method.apply(this.supabaseStore, args);
+          const res = await method.apply(this.supabaseStore, args);
+          if (res !== null && res !== undefined) {
+            return res;
+          }
+          if (this.sqliteStore) {
+            const fallbackMethod = (this.sqliteStore as any)[fnName];
+            if (typeof fallbackMethod === 'function') {
+              const fallbackRes = await fallbackMethod.apply(this.sqliteStore, args);
+              if (fallbackRes !== null && fallbackRes !== undefined) {
+                return fallbackRes;
+              }
+            }
+          }
+          return res;
         }
       } catch (err: any) {
         // If table does not exist in Supabase (migration pending) and SQLite is available locally, fallback
-        if (this.sqliteStore && (err.code === '42P01' || err.message?.includes('does not exist') || err.message?.includes('relation'))) {
+        if (this.sqliteStore && (err.code === '42P01' || err.code === 'PGRST205' || err.message?.includes('does not exist') || err.message?.includes('relation') || err.message?.includes('schema cache'))) {
           console.warn(`[Store] Supabase table pending for ${String(fnName)}, falling back to local SQLite: ${err.message}`);
           const fallbackMethod = (this.sqliteStore as any)[fnName];
           return await fallbackMethod.apply(this.sqliteStore, args);

@@ -1,5 +1,5 @@
-import { DataStore } from './supabaseStore';
-import { db } from './database';
+import { DataStore } from './supabaseStore.js';
+import { db } from './database.js';
 
 export class SqliteStore implements DataStore {
   async getProducts(): Promise<any[]> {

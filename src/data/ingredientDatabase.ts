@@ -1,4 +1,4 @@
-import { IngredientExplanation } from '../types/label';
+import { IngredientExplanation } from '../types/label.js';
 
 export const INGREDIENT_DATABASE: Record<string, IngredientExplanation> = {
   'raw mango': {

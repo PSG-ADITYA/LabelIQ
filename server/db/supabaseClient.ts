@@ -5,6 +5,8 @@
  * 2. Standalone / Demo Mode: If unconfigured, falls back to local SQLite with zero network overhead.
  */
 
+import '../env.js';
+
 export interface SupabaseConfig {
   url?: string;
   serviceKey?: string;
@@ -64,7 +66,8 @@ export async function testSupabaseConnection(): Promise<{ success: boolean; mess
       headers: {
         'apikey': apiKey || '',
         'Authorization': `Bearer ${apiKey || ''}`
-      }
+      },
+      signal: AbortSignal.timeout(8000)
     });
 
     if (res.ok || res.status === 200 || res.status === 404) {

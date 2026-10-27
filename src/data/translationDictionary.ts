@@ -1,4 +1,4 @@
-import { IndianLanguageCode } from '../types/label';
+import { IndianLanguageCode } from '../types/label.js';
 
 export interface LanguageMeta {
   code: IndianLanguageCode;

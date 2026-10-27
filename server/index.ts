@@ -1,60 +1,29 @@
+import { ensureEnvironmentLoaded } from './env.js';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { initDatabase } from './db/database';
-import { seedDemoData } from './db/seed';
-import { dataStore } from './db/store';
-import { computeTemplateRecommendations, compareReferenceLabel } from './recommendationEngine';
-import { logDatabaseMode, testSupabaseConnection, getSupabaseConfig } from './db/supabaseClient';
-import { explainIngredient, INGREDIENT_DATABASE } from '../src/data/ingredientDatabase';
+import { initDatabase } from './db/database.js';
+import { seedDemoData } from './db/seed.js';
+import { dataStore } from './db/store.js';
+import { computeTemplateRecommendations, compareReferenceLabel } from './recommendationEngine.js';
+import { logDatabaseMode, testSupabaseConnection, getSupabaseConfig } from './db/supabaseClient.js';
+import { explainIngredient, INGREDIENT_DATABASE } from '../src/data/ingredientDatabase.js';
 import { 
   translateTextDeterministic, 
   SUPPORTED_INDIAN_LANGUAGES, 
   PACKAGING_TERMS_DICTIONARY, 
   COMMON_PRODUCT_NAMES 
-} from '../src/data/translationDictionary';
+} from '../src/data/translationDictionary.js';
 
 // ============================================================================
 // 1. SECURE ENVIRONMENT CONFIGURATION
 // Explicitly loads .env.labeliq (with fallback to .env) from project root.
 // Never exposes secret values in logs or client-facing responses.
 // ============================================================================
-const envLabelIqPath = path.resolve(process.cwd(), '.env.labeliq');
-const standardEnvPath = path.resolve(process.cwd(), '.env');
-
-function loadEnvironmentFile(filePath: string, sourceName: string): boolean {
-  if (!fs.existsSync(filePath)) return false;
-  try {
-    const rawContent = fs.readFileSync(filePath, 'utf8');
-    const parsed = dotenv.parse(rawContent);
-    for (const [key, val] of Object.entries(parsed)) {
-      if (val && typeof val === 'string' && val.trim().length > 0) {
-        process.env[key] = val.trim();
-      }
-    }
-    const hasGemini = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 0);
-    const hasSupabase = Boolean(
-      process.env.SUPABASE_URL &&
-      (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY)
-    );
-    console.log(`[Security] Loaded ${sourceName}. Gemini Key: ${hasGemini ? 'Present' : 'Not configured'}, Supabase: ${hasSupabase ? 'Configured' : 'Offline / SQLite mode'}`);
-    return true;
-  } catch (err: any) {
-    console.warn(`[Security] Could not parse ${sourceName}:`, err.message);
-    return false;
-  }
-}
-
-const loadedLabelIq = loadEnvironmentFile(envLabelIqPath, '.env.labeliq');
-if (!loadedLabelIq) {
-  const loadedStandard = loadEnvironmentFile(standardEnvPath, '.env');
-  if (!loadedStandard) {
-    console.log('[Security] No .env.labeliq or .env found. Operating in local OCR & transparent demo mode.');
-  }
-}
+ensureEnvironmentLoaded();
 
 // Log database operating mode (SQLite vs Supabase dual-persistence)
 logDatabaseMode();
@@ -237,7 +206,7 @@ app.get('/api/ai/test', async (_req: Request, res: Response): Promise<void> => {
       const latencyMs = Date.now() - startTime;
 
       if (testResponse.ok) {
-        const data = await testResponse.json();
+        const data: any = await testResponse.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'OK';
         res.json({
           configured: true,
@@ -249,7 +218,7 @@ app.get('/api/ai/test', async (_req: Request, res: Response): Promise<void> => {
         });
         return;
       } else {
-        const errorJson = await testResponse.json().catch(() => ({}));
+        const errorJson: any = await testResponse.json().catch(() => ({}));
         const rawMsg = errorJson.error?.message || 'Gemini API error';
         let category: 'auth_error' | 'quota_exceeded' | 'model_unavailable' | 'service_unavailable' | 'provider_error' = 'provider_error';
         let friendlyMsg = rawMsg;
@@ -310,7 +279,7 @@ app.get('/api/products', async (_req: Request, res: Response) => {
 
 app.get('/api/products/:id', async (req: Request, res: Response): Promise<void> => {
   try {
-    const product = await dataStore.getProduct(req.params.id);
+    const product = await dataStore.getProduct(req.params.id as string);
     if (!product) {
       res.status(404).json({ error: 'Product not found.' });
       return;
@@ -333,7 +302,7 @@ app.post('/api/products', async (req: Request, res: Response): Promise<void> => 
 // Create new recipe version for a product (Formulation Upgrade)
 app.post('/api/products/:id/versions', async (req: Request, res: Response): Promise<void> => {
   try {
-    const result = await dataStore.createRecipeVersion(req.params.id, req.body);
+    const result = await dataStore.createRecipeVersion(req.params.id as string, req.body);
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -377,7 +346,7 @@ app.post('/api/batches', async (req: Request, res: Response): Promise<void> => {
 // ============================================================================
 app.get('/api/public/verify/:identifier', async (req: Request, res: Response): Promise<void> => {
   try {
-    const result = await dataStore.getPublicVerify(req.params.identifier);
+    const result = await dataStore.getPublicVerify(req.params.identifier as string);
     if (!result) {
       res.status(404).json({ success: false, message: 'Batch or product record not found in system.' });
       return;
@@ -405,7 +374,7 @@ app.get('/api/public/verify/:identifier', async (req: Request, res: Response): P
 // ============================================================================
 app.get('/api/public/story/:id', async (req: Request, res: Response): Promise<void> => {
   try {
-    const story = await dataStore.getPublicStory(req.params.id);
+    const story = await dataStore.getPublicStory(req.params.id as string);
     if (!story) {
       res.status(404).json({ success: false, message: 'Story record not found in system.' });
       return;
@@ -489,7 +458,7 @@ ${JSON.stringify(fields, null, 2)}`;
             );
 
             if (apiRes.ok) {
-              const resData = await apiRes.json();
+              const resData: any = await apiRes.json();
               const text = resData.candidates?.[0]?.content?.parts?.[0]?.text?.replace(/```json/g, '').replace(/```/g, '').trim();
               const parsed = JSON.parse(text);
               res.json({
@@ -536,7 +505,7 @@ ${JSON.stringify(fields, null, 2)}`;
 app.put('/api/batches/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const { status, packagedUnits, notes } = req.body;
-    await dataStore.updateBatch(req.params.id, { status, packagedUnits, notes });
+    await dataStore.updateBatch(req.params.id as string, { status, packagedUnits, notes });
     res.json({ success: true, message: 'Batch updated successfully.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -545,7 +514,7 @@ app.put('/api/batches/:id', async (req: Request, res: Response): Promise<void> =
 
 app.post('/api/batches/:id/duplicate', async (req: Request, res: Response): Promise<void> => {
   try {
-    const result = await dataStore.duplicateBatch(req.params.id);
+    const result = await dataStore.duplicateBatch(req.params.id as string);
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -741,7 +710,7 @@ Return ONLY pure JSON without markdown backticks.`;
             );
 
             if (apiRes.ok) {
-              const resJson = await apiRes.json();
+              const resJson: any = await apiRes.json();
               const textOut = resJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
               const cleanJson = textOut.replace(/```json/g, '').replace(/```/g, '').trim();
               parsedAiDraft = JSON.parse(cleanJson);
@@ -812,7 +781,7 @@ Return ONLY pure JSON without markdown backticks.`;
 
     // 6. Ingredients & Allergen extraction
     const rawIngText = rawDescription.replace(/.*(?:ingredients?|recipe|contains?|made of|made with)\s*[:\-]?\s*/i, '');
-    const candidateParts = rawIngText.split(/[,;\n•\+]/).map(s => s.trim()).filter(s => s.length > 1 && !s.toLowerCase().includes('net wt') && !s.toLowerCase().includes('fssai'));
+    const candidateParts = rawIngText.split(/[,;\n•\+]/).map((s: string) => s.trim()).filter((s: string) => s.length > 1 && !s.toLowerCase().includes('net wt') && !s.toLowerCase().includes('fssai'));
     
     const allergenKeys = [
       { key: 'mustard', label: 'Mustard & mustard oil' },
@@ -827,7 +796,7 @@ Return ONLY pure JSON without markdown backticks.`;
     ];
 
     const detectedAllergens: string[] = [];
-    const ingredientsList = (candidateParts.length > 0 ? candidateParts : ['Primary agricultural ingredient']).map((part, idx) => {
+    const ingredientsList = (candidateParts.length > 0 ? candidateParts : ['Primary agricultural ingredient']).map((part: string, idx: number) => {
       const pctMatch = part.match(/(\d+(?:\.\d+)?%)/);
       const isAlg = allergenKeys.some(a => part.toLowerCase().includes(a.key));
       if (isAlg) {
@@ -1049,7 +1018,7 @@ RULES:
             );
 
             if (apiResponse.ok) {
-              const geminiJson = await apiResponse.json();
+              const geminiJson: any = await apiResponse.json();
               const candidateText = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text || '';
               const cleanedText = candidateText.replace(/```json/g, '').replace(/```/g, '').trim();
               parsedVisionData = JSON.parse(cleanedText);
@@ -1299,7 +1268,7 @@ CRITICAL RULES:
           );
 
           if (apiRes.ok) {
-            const data = await apiRes.json();
+            const data: any = await apiRes.json();
             const textOut = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             const parsed = JSON.parse(textOut.replace(/```json/g, '').replace(/```/g, '').trim());
             res.json({
@@ -1318,7 +1287,7 @@ CRITICAL RULES:
     }
 
     // PATH 2: Deterministic Agricultural Rule Engine Fallback
-    const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const lines = rawText.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
     const fssaiMatch = rawText.match(/\b\d{14}\b/);
     const batchMatch = rawText.match(/(?:batch|lot|b\.no|lot no)\s*[:\-.]?\s*([a-z0-9\-\/]+)/i);
     const qtyMatch = rawText.match(/(\d+(?:\.\d+)?)\s*(g|kg|ml|l|grams?|kilograms?|liters?|litres?)\b/i);
@@ -1339,7 +1308,7 @@ CRITICAL RULES:
       { key: 'sesame', label: 'Sesame' },
     ];
     const detectedAllergens: string[] = [];
-    const ingredients = lines.slice(1, 8).map((line, idx) => {
+    const ingredients = lines.slice(1, 8).map((line: string, idx: number) => {
       const isAlg = allergenKeys.some(a => line.toLowerCase().includes(a.key));
       return {
         id: `ing-${idx}`,
