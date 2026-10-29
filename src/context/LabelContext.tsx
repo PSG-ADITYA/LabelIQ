@@ -54,6 +54,8 @@ interface LabelContextType {
   removeToast: (id: string) => void;
   createNewBlankLabel: () => void;
   loadDemoPickle: () => void;
+  createWizardStep: number;
+  setCreateWizardStep: (step: number) => void;
   // Production Batches methods
   loadBatches: () => Promise<void>;
   createBatch: (batchData: Partial<ProductionBatch>) => Promise<string | null>;
@@ -137,6 +139,9 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Comparison target (v2 vs current)
   const [comparisonTarget, setComparisonTarget] = useState<ProductLabel | null>(DEMO_PICKLE_V2);
+
+  // Active step in CreateLabel wizard (allows scanner and AI draft to navigate directly to Step 2)
+  const [createWizardStep, setCreateWizardStep] = useState<number>(1);
 
   // Notifications toast list
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -353,14 +358,72 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Create Batch
   const createBatch = async (batchData: Partial<ProductionBatch>): Promise<string | null> => {
-    const res = await api.createBatch(batchData);
-    if (res.success && res.batchId) {
-      await loadBatches();
-      showToast(`Created production batch "${batchData.batch_number}"!`, 'success');
-      return res.batchId;
-    } else {
-      showToast(`Failed to create batch: ${res.error || 'Server error'}`, 'error');
-      return null;
+    try {
+      const res = await api.createBatch(batchData);
+      if (res.success && res.batchId) {
+        await loadBatches();
+        showToast(`Created production batch "${batchData.batch_number}"!`, 'success');
+        return res.batchId;
+      } else {
+        // Fallback to local session batch if remote schema pending or offline
+        const localId = `batch-local-${Date.now()}`;
+        const newBatch: ProductionBatch = {
+          id: localId,
+          product_id: batchData.product_id || currentLabel.id || 'prod-demo-pickle',
+          variant_id: batchData.variant_id || 'var-default',
+          batch_number: batchData.batch_number || `BATCH-${Date.now().toString().slice(-4)}`,
+          mfg_date: batchData.mfg_date || new Date().toISOString().slice(0, 10),
+          expiry_date: batchData.expiry_date || new Date(Date.now() + 365*24*3600*1000).toISOString().slice(0, 10),
+          best_before_months: batchData.best_before_months || 12,
+          batch_size_quantity: batchData.batch_size_quantity || 100,
+          batch_size_unit: batchData.batch_size_unit || 'kg',
+          planned_units: batchData.planned_units || 250,
+          packaged_units: 0,
+          status: 'Planned',
+          notes: batchData.notes || '',
+          product_name: currentLabel.productName || 'Traditional Mango Pickle',
+          brand_name: currentLabel.brandName || 'Pahadi Heritage Foods',
+          category: currentLabel.category || 'General Food',
+          variant_name: `${currentLabel.netQuantity}${currentLabel.netQuantityUnit} Standard`,
+          net_quantity: currentLabel.netQuantity || 400,
+          net_quantity_unit: currentLabel.netQuantityUnit || 'g',
+          packaging_format: 'Glass Jar',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        setBatches(prev => [newBatch, ...prev]);
+        showToast(`Batch "${newBatch.batch_number}" saved to local session. (Remote cloud database uninitialized: run server/db/supabase-migration.sql to enable permanent cloud sync).`, 'warning');
+        return localId;
+      }
+    } catch {
+      const localId = `batch-local-${Date.now()}`;
+      const newBatch: ProductionBatch = {
+        id: localId,
+        product_id: batchData.product_id || currentLabel.id || 'prod-demo-pickle',
+        variant_id: batchData.variant_id || 'var-default',
+        batch_number: batchData.batch_number || `BATCH-${Date.now().toString().slice(-4)}`,
+        mfg_date: batchData.mfg_date || new Date().toISOString().slice(0, 10),
+        expiry_date: batchData.expiry_date || new Date(Date.now() + 365*24*3600*1000).toISOString().slice(0, 10),
+        best_before_months: batchData.best_before_months || 12,
+        batch_size_quantity: batchData.batch_size_quantity || 100,
+        batch_size_unit: batchData.batch_size_unit || 'kg',
+        planned_units: batchData.planned_units || 250,
+        packaged_units: 0,
+        status: 'Planned',
+        notes: batchData.notes || '',
+        product_name: currentLabel.productName || 'Traditional Mango Pickle',
+        brand_name: currentLabel.brandName || 'Pahadi Heritage Foods',
+        category: currentLabel.category || 'General Food',
+        variant_name: `${currentLabel.netQuantity}${currentLabel.netQuantityUnit} Standard`,
+        net_quantity: currentLabel.netQuantity || 400,
+        net_quantity_unit: currentLabel.netQuantityUnit || 'g',
+        packaging_format: 'Glass Jar',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      setBatches(prev => [newBatch, ...prev]);
+      showToast(`Batch "${newBatch.batch_number}" saved to local session (offline).`, 'info');
+      return localId;
     }
   };
 
@@ -434,6 +497,8 @@ export const LabelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         removeToast,
         createNewBlankLabel,
         loadDemoPickle,
+        createWizardStep,
+        setCreateWizardStep,
         loadBatches,
         createBatch,
         updateBatchStatus,

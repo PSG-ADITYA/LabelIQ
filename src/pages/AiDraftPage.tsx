@@ -3,6 +3,7 @@ import { useLabel } from '../context/LabelContext';
 import { SUPPORTED_FOOD_CATEGORIES, FoodCategoryConfig } from '../data/fssaiRules';
 import { FieldProvenance, ProductLabel } from '../types/label';
 import { API_BASE } from '../services/api';
+import { ComparisonPage } from './ComparisonPage';
 import { 
   Sparkles, 
   ArrowRight, 
@@ -25,11 +26,15 @@ import {
   Cpu,
   Mic,
   MicOff,
-  Volume2
+  Volume2,
+  GitCompare
 } from 'lucide-react';
 
 export const AiDraftPage: React.FC = () => {
   const { updateCurrentLabel, setActiveTab, showToast, settings } = useLabel();
+
+  // Sub-Tab State: AI Draft vs Recipe Diff
+  const [subTab, setSubTab] = useState<'draft' | 'diff'>('draft');
 
   // Input Form State
   const [selectedCategory, setSelectedCategory] = useState<string>(SUPPORTED_FOOD_CATEGORIES[0].name);
@@ -38,6 +43,15 @@ export const AiDraftPage: React.FC = () => {
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [showKnownAccordion, setShowKnownAccordion] = useState<boolean>(false);
+
+  // Conversational Form State (Beginner-Friendly Guided Questions)
+  const [conversationalMode, setConversationalMode] = useState<boolean>(true);
+  const [qProductName, setQProductName] = useState<string>('');
+  const [qIngredients, setQIngredients] = useState<string>('');
+  const [qPackSize, setQPackSize] = useState<string>('400g');
+  const [qManufacturer, setQManufacturer] = useState<string>('');
+  const [qNutritionOption, setQNutritionOption] = useState<'standard_calc' | 'enter_later'>('standard_calc');
+  const [qFssaiNumber, setQFssaiNumber] = useState<string>('');
 
   // Voice speech state
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -104,9 +118,64 @@ export const AiDraftPage: React.FC = () => {
   const loadExample = (categoryName: string, textExample: string, brand?: string, net?: string) => {
     setSelectedCategory(categoryName);
     setDescription(textExample);
-    if (brand) setKnownBrand(brand);
-    if (net) setKnownNetQty(net);
+    if (brand) {
+      setKnownBrand(brand);
+      setQManufacturer(brand);
+    }
+    if (net) {
+      setKnownNetQty(net);
+      setQPackSize(`${net}g`);
+    }
+    // Populate conversational fields
+    if (categoryName.includes('Pickle')) {
+      setQProductName('Sun-Cured Raw Green Mango Pickle');
+      setQIngredients('Raw green mango, cold-pressed mustard oil, fenugreek seeds, kashmiri red chilli, turmeric, sea salt');
+    } else if (categoryName.includes('Honey')) {
+      setQProductName('Raw Wildflower Forest Honey');
+      setQIngredients('Raw unprocessed wildflower honey 100%');
+    } else if (categoryName.includes('Spices')) {
+      setQProductName('Lakadong High-Curcumin Turmeric');
+      setQIngredients('Pure Lakadong turmeric powder (7.5% natural curcumin)');
+    } else if (categoryName.includes('Dairy')) {
+      setQProductName('Gir Cow A2 Bilona Desi Ghee');
+      setQIngredients('Pure cultured clarified butterfat from grass-fed Gir cow A2 curd');
+    } else {
+      setQProductName('Artisan Food Product');
+      setQIngredients(textExample);
+    }
     setDraftResult(null);
+  };
+
+  const handleConversationalSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!qProductName.trim() && !qIngredients.trim()) {
+      showToast('Please enter your product name or ingredients.', 'warning');
+      return;
+    }
+    const parts = [];
+    if (qProductName.trim()) parts.push(`Product: ${qProductName.trim()}`);
+    if (qIngredients.trim()) parts.push(`Ingredients: ${qIngredients.trim()}`);
+    if (qPackSize) parts.push(`Pack size: ${qPackSize}`);
+    if (qManufacturer.trim()) parts.push(`Manufacturer: ${qManufacturer.trim()}`);
+    if (qNutritionOption === 'standard_calc') {
+      parts.push('Estimate standard nutrition facts from recipe ingredients.');
+    } else {
+      parts.push('Nutrition lab values will be entered later.');
+    }
+    if (qFssaiNumber.trim()) parts.push(`FSSAI License: ${qFssaiNumber.trim()}`);
+    
+    const combined = parts.join('. ') + '.';
+    setDescription(combined);
+    if (qManufacturer.trim()) setKnownBrand(qManufacturer.trim());
+    if (qFssaiNumber.trim()) setKnownFssai(qFssaiNumber.trim());
+    if (qPackSize) {
+      const match = qPackSize.match(/\d+/);
+      if (match) setKnownNetQty(match[0]);
+    }
+
+    setTimeout(() => {
+      executeGenerateDraft();
+    }, 50);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -303,12 +372,244 @@ export const AiDraftPage: React.FC = () => {
         </div>
       </div>
 
-      {!draftResult ? (
+      {/* Sub-Option Navigation: AI Formulation Draft vs Recipe Diff */}
+      <div className="flex items-center gap-2 border-b border-cream-200 pb-2">
+        <button
+          type="button"
+          onClick={() => setSubTab('draft')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            subTab === 'draft'
+              ? 'bg-forest-900 text-white shadow-xs'
+              : 'bg-white text-slate-700 border border-cream-300 hover:bg-cream-100'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5 text-limeaccent-400" />
+          <span>✨ AI Formulation & Draft</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSubTab('diff')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            subTab === 'diff'
+              ? 'bg-forest-900 text-white shadow-xs'
+              : 'bg-white text-slate-700 border border-cream-300 hover:bg-cream-100'
+          }`}
+        >
+          <GitCompare className="w-3.5 h-3.5 text-limeaccent-400" />
+          <span>🔄 Recipe Diff & Formulation Upgrade</span>
+        </button>
+      </div>
+
+      {subTab === 'diff' ? (
+        <div className="animate-fade-in">
+          <ComparisonPage />
+        </div>
+      ) : !draftResult ? (
         /* 2. INPUT FORM */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Main Form (8 Cols) */}
           <div className="lg:col-span-8 bg-white rounded-3xl border border-cream-200 shadow-sm p-6 sm:p-8 space-y-6">
-            <form onSubmit={executeGenerateDraft} className="space-y-6">
+            {/* Mode Switcher: Guided Conversational vs Free-form */}
+            <div className="flex rounded-2xl bg-cream-100 p-1 border border-cream-200 text-xs font-bold shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setConversationalMode(true)}
+                className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  conversationalMode
+                    ? 'bg-forest-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <HelpCircle className="w-4 h-4 text-limeaccent-400" />
+                <span>Guided Questions (Beginner-Friendly)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConversationalMode(false)}
+                className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  !conversationalMode
+                    ? 'bg-forest-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Edit3 className="w-4 h-4 text-limeaccent-400" />
+                <span>Free-Form Description & Voice</span>
+              </button>
+            </div>
+
+            {/* CONVERSATIONAL GUIDED QUESTIONS FORM */}
+            {conversationalMode ? (
+              <form onSubmit={handleConversationalSubmit} className="space-y-5 animate-fadeIn">
+                <div className="p-3.5 rounded-xl bg-forest-50/70 border border-forest-200 text-xs text-forest-900 leading-snug">
+                  <strong>Conversational Guide:</strong> Answer what you know in simple words. You can skip any optional questions. We'll generate an editable label without inventing missing data.
+                </div>
+
+                {/* Q1: What is your product? */}
+                <div className="p-4 rounded-2xl bg-cream-50/50 border border-cream-200 space-y-2">
+                  <label className="block text-xs font-bold text-slate-800">
+                    1. What is your product called? *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={qProductName}
+                    onChange={(e) => setQProductName(e.target.value)}
+                    placeholder="e.g. Homemade Mango Pickle or Raw Wildflower Forest Honey"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-cream-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-forest-800"
+                  />
+                  <span className="text-[11px] text-slate-500 block">The primary title that consumers will read on the front of the packaging.</span>
+                </div>
+
+                {/* Q2: What ingredients does it contain? */}
+                <div className="p-4 rounded-2xl bg-cream-50/50 border border-cream-200 space-y-2">
+                  <label className="block text-xs font-bold text-slate-800">
+                    2. What ingredients does it contain? *
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={qIngredients}
+                    onChange={(e) => setQIngredients(e.target.value)}
+                    placeholder="e.g. Raw mango, cold-pressed mustard oil, fenugreek seeds, salt, turmeric, red chilli"
+                    className="w-full p-3 rounded-xl border border-cream-300 bg-white text-xs leading-relaxed focus:ring-2 focus:ring-forest-800"
+                  />
+                  <span className="text-[11px] text-slate-500 block">List your recipe ingredients. We'll check for statutory allergens automatically.</span>
+                </div>
+
+                {/* Q3: What is the pack size? */}
+                <div className="p-4 rounded-2xl bg-cream-50/50 border border-cream-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-800">
+                      3. What is the pack size / net quantity?
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium">e.g. 400g, 250ml</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={qPackSize}
+                      onChange={(e) => setQPackSize(e.target.value)}
+                      placeholder="e.g. 400g"
+                      className="w-36 px-3 py-2 rounded-xl border border-cream-300 bg-white text-xs font-mono font-bold"
+                    />
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {['250g', '400g', '500g', '1kg', '500ml'].map(preset => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setQPackSize(preset)}
+                          className={`px-2 py-1 rounded-lg text-xs font-medium border ${
+                            qPackSize === preset
+                              ? 'bg-forest-900 text-white border-forest-900'
+                              : 'bg-white text-slate-600 border-cream-300 hover:bg-cream-100'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Q4: Who manufactures it? */}
+                <div className="p-4 rounded-2xl bg-cream-50/50 border border-cream-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-800">
+                      4. Who manufactures or packs it? (Optional)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setQManufacturer('')}
+                      className="text-[11px] text-forest-800 hover:underline font-semibold"
+                    >
+                      Skip this for now
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={qManufacturer}
+                    onChange={(e) => setQManufacturer(e.target.value)}
+                    placeholder="e.g. Pahadi Heritage Foods, Almora, Uttarakhand"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-cream-300 bg-white text-xs"
+                  />
+                  <span className="text-[11px] text-slate-500 block">Brand name or company entity on packaging.</span>
+                </div>
+
+                {/* Q5: Do you have nutrition information? */}
+                <div className="p-4 rounded-2xl bg-cream-50/50 border border-cream-200 space-y-2">
+                  <label className="block text-xs font-bold text-slate-800">
+                    5. Nutrition Information Preference
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setQNutritionOption('standard_calc')}
+                      className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                        qNutritionOption === 'standard_calc'
+                          ? 'bg-forest-900 text-white border-forest-900 shadow-xs'
+                          : 'bg-white text-slate-700 border-cream-300 hover:bg-cream-50'
+                      }`}
+                    >
+                      <strong className="block mb-0.5">Estimate from Recipe Ingredients</strong>
+                      <span className="text-[10px] opacity-80 block">Pre-fill estimated calories, protein, carbs and fat based on standard ICMR-NIN food data.</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQNutritionOption('enter_later')}
+                      className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                        qNutritionOption === 'enter_later'
+                          ? 'bg-forest-900 text-white border-forest-900 shadow-xs'
+                          : 'bg-white text-slate-700 border-cream-300 hover:bg-cream-50'
+                      }`}
+                    >
+                      <strong className="block mb-0.5">I will enter lab test results later</strong>
+                      <span className="text-[10px] opacity-80 block">Keep nutrition fields blank for human verification. Never invent lab numbers.</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Q6: Do you have an FSSAI license number? */}
+                <div className="p-4 rounded-2xl bg-cream-50/50 border border-cream-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-800">
+                      6. FSSAI License Number (Optional)
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-mono">14 digits</span>
+                  </div>
+                  <input
+                    type="text"
+                    maxLength={14}
+                    value={qFssaiNumber}
+                    onChange={(e) => setQFssaiNumber(e.target.value.replace(/\D/g, ''))}
+                    placeholder="e.g. 10019022009841 (Optional - can be added later)"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-cream-300 bg-white text-xs font-mono tracking-wider"
+                  />
+                  <span className="text-[10px] text-slate-500 block">Can be verified or auto-extracted anytime from FoSCoS registry.</span>
+                </div>
+
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={isGenerating}
+                  className="w-full py-4 px-6 rounded-2xl bg-forest-900 hover:bg-forest-800 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+                >
+                  {isGenerating ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-limeaccent-400" />
+                      <span>Generating Label Draft...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 text-limeaccent-400" />
+                      <span>✨ Generate Structured Label Draft &rarr;</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            ) : (
+              /* FREE-FORM TEXT & VOICE INPUT FORM */
+              <form onSubmit={executeGenerateDraft} className="space-y-6 animate-fadeIn">
               {/* Category Selection */}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
@@ -528,6 +829,7 @@ export const AiDraftPage: React.FC = () => {
                 </span>
               </div>
             </form>
+            )}
           </div>
 
           {/* Quick Farmer Templates Sidebar (4 Cols) */}

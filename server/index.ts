@@ -35,12 +35,12 @@ if (!process.env.VERCEL) {
 }
 
 // Verified Gemini Models supported by Google AI Studio
-// gemini-3.5-flash-lite and gemini-flash-lite-latest are confirmed active and quota-ready
-export const PRIMARY_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+// gemini-3.5-flash is ultra-fast (sub-4s), highly accurate, and supports multimodal vision
+export const PRIMARY_GEMINI_MODEL = 'gemini-3.5-flash';
 export const CANDIDATE_GEMINI_MODELS = [
-  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
   'gemini-flash-lite-latest',
-  'gemini-3.5-flash'
+  'gemini-3.5-flash-lite'
 ];
 
 const app = express();
@@ -933,26 +933,60 @@ app.post('/api/scan', safeUpload('labelFile'), async (req: Request, res: Respons
     // PATH 1: Real Multimodal Gemini Vision API (if user has configured API Key)
     if (!isExplicitDemo && customKey && customKey.trim().length > 10) {
       try {
-        console.log(`[Scan] Invoking Google Gemini 3.8 Flash Vision for ${req.file.originalname}...`);
-        const prompt = `You are a certified food regulatory compliance auditor and OCR vision model.
-Analyze this food packaging label / document thoroughly. Extract all visible fields into a pure JSON object adhering to this schema:
+        console.log(`[Scan] Invoking Google Gemini Vision for ${req.file.originalname}...`);
+        const prompt = `You are a certified food and supplement regulatory compliance auditor and OCR vision model.
+Analyze this food/supplement packaging label or document thoroughly.
+
+STEP 0 — EVALUATE DOCUMENT TYPE:
+Check if the image is an authentic food, beverage, or dietary supplement packaging label.
+If this image is a shipping label, parcel tracking sticker, garment/apparel care tag, electronic appliance rating plate, invoice, receipt, or non-food document:
+- Set "isFoodPackaging": false
+- Set "unrecognizedTypeReason": "Detailed reason why this is not food packaging (e.g. 'Detected a shipping courier label' or 'Detected an apparel care tag') and instruct the user to upload an authentic food or supplement label."
+Otherwise:
+- Set "isFoodPackaging": true
+- Set "unrecognizedTypeReason": ""
+
+STEP 1 — DETECT PANEL TYPE:
+Look for "Nutrition Facts", "Supplement Facts", or multiple named panels (e.g. "AM Packet", "PM Packet", "Capsule").
+If you find MULTIPLE separate Supplement Facts panels, preserve them individually in "supplementPanels[]". Do NOT merge them.
+
+STEP 2 — EXTRACT ALL INGREDIENTS:
+Transcribe the COMPLETE ingredient list without truncating. If text wraps or continues, follow it to the end.
+
+STEP 3 — NUTRITIONAL & FAT VALUES:
+Specifically look for all Fat declarations: Total Fat (g), Saturated Fat (g), Trans Fat (g), and Cholesterol (mg).
+Extract them accurately into nutrition.totalFatG, nutrition.saturatedFatG, nutrition.transFatG, nutrition.cholesterolMg.
+
+STEP 4 — ALLERGEN ANALYSIS:
+- Check EACH ingredient individually against FSSAI Schedule IX major allergens: cereals containing gluten, crustaceans, eggs, fish, peanuts, soybeans, milk, tree nuts, mustard, sesame, sulphites.
+- For fish-derived ingredients (e.g. cod liver oil, fish gelatin, anchovy): mark isAllergen=true with allergen="Fish" since they are fish-derived. Evaluate the actual fish source, not just the word "oil".
+- Mark uncertain allergens with "needsVerification": true in allergenDeclarations.
+- Never classify an ingredient as allergen-free solely because it is an oil or extract form.
+
+Return a pure JSON object with this exact schema:
 {
+  "isFoodPackaging": boolean,
+  "unrecognizedTypeReason": "string explanation if not food packaging or empty",
   "productName": "string or empty",
   "brandName": "string or empty",
-  "category": "Pickles, Chutneys & Condiments / Bakery & Confectionery / Spices & Seasonings / Non-Alcoholic Beverages & Syrups / Dairy Products / Snacks, Namkeen & Savouries / Honey, Oils & Agricultural Produce / General Packaged Food",
+  "category": "Pickles, Chutneys & Condiments / Bakery & Confectionery / Spices & Seasonings / Dietary Supplements / Non-Alcoholic Beverages & Syrups / Dairy Products / Snacks, Namkeen & Savouries / Honey, Oils & Agricultural Produce / General Packaged Food",
   "description": "string or empty",
-  "netQuantity": number,
-  "netQuantityUnit": "g" | "kg" | "ml" | "l",
-  "fssaiLicense": "string 14-digit number if visible",
+  "netQuantity": number or null,
+  "netQuantityUnit": "g" | "kg" | "ml" | "l" | "capsules" | "tablets" | "sachets",
+  "fssaiLicense": "string 14-digit number if visible or empty",
   "isVegetarian": boolean,
   "ingredients": [
-    { "name": "Ingredient name", "percentage": "string e.g. 62% or empty", "isAllergen": boolean }
+    { "name": "Ingredient name EXACTLY as printed", "percentage": "string e.g. 62% or empty", "isAllergen": boolean, "allergenType": "Fish | Milk | Gluten | Nuts | Soy | Mustard | Sesame | Egg | Crustaceans | Sulphites | empty" }
   ],
-  "allergenDeclarations": ["string"],
+  "allergenDeclarations": [
+    { "text": "allergen declaration as printed", "needsVerification": false }
+  ],
   "nutrition": {
-    "servingBasis": "per 100g" | "per 100ml",
-    "servingSize": "string e.g. 15g",
+    "servingBasis": "per 100g | per 100ml | per serving | per capsule | per packet",
+    "servingSize": "string e.g. 15g or 2 capsules",
+    "servingsPerContainer": "string or null",
     "energyKcal": number or null,
+    "energyKJ": number or null,
     "proteinG": number or null,
     "carbohydratesG": number or null,
     "totalSugarsG": number or null,
@@ -960,8 +994,22 @@ Analyze this food packaging label / document thoroughly. Extract all visible fie
     "totalFatG": number or null,
     "saturatedFatG": number or null,
     "transFatG": number or null,
-    "sodiumMg": number or null
+    "cholesterolMg": number or null,
+    "sodiumMg": number or null,
+    "additionalNutrients": [
+      { "name": "Nutrient name e.g. Vitamin C", "amount": "string e.g. 60mg", "percentDV": "string e.g. 100% or empty" }
+    ]
   },
+  "supplementPanels": [
+    {
+      "panelName": "Panel label e.g. AM Packet / PM Packet / Capsule or null for single panel",
+      "servingSize": "string",
+      "servingsPerContainer": "string or null",
+      "nutrients": [
+        { "name": "Nutrient name", "amount": "string with unit", "percentDV": "string or empty" }
+      ]
+    }
+  ],
   "batchNumber": "string or empty",
   "mfgDate": "YYYY-MM-DD or empty",
   "expiryDate": "YYYY-MM-DD or empty",
@@ -972,14 +1020,17 @@ Analyze this food packaging label / document thoroughly. Extract all visible fie
     "customerCarePhone": "string",
     "customerCareEmail": "string"
   },
-  "rawExtractedText": "Direct text snippet transcribed verbatim from packaging",
+  "rawExtractedText": "Complete verbatim transcription of ALL text visible on label",
   "lowConfidenceFields": [
     { "field": "fieldName", "reason": "Explanation of visual ambiguity or illegibility" }
   ]
 }
 RULES:
-1. Missing or unreadable numbers must be null. NEVER hallucinate nutrition values.
-2. Return ONLY clean JSON, without markdown backticks.`;
+1. Missing or unreadable numbers must be null. NEVER hallucinate or invent nutrition values.
+2. Include "supplementPanels" only when multiple distinct Supplement/Nutrition Facts panels are present. Leave as empty array [] otherwise.
+3. "allergenDeclarations" is an array of objects, not strings.
+4. Transcribe the ingredient list completely — never truncate mid-list.
+5. Return ONLY clean JSON, without markdown backticks or preamble.`;
 
         const base64Data = req.file.buffer.toString('base64');
         const candidateVisionModels = CANDIDATE_GEMINI_MODELS;
@@ -1011,9 +1062,9 @@ RULES:
                       ],
                     },
                   ],
-                  generationConfig: { response_mime_type: 'application/json', temperature: 0.1 }
+                  generationConfig: { response_mime_type: 'application/json', temperature: 0.1, maxOutputTokens: 2048 }
                 }),
-                signal: AbortSignal.timeout(30000),
+                signal: AbortSignal.timeout(15000),
               }
             );
 
@@ -1027,6 +1078,10 @@ RULES:
               break;
             } else {
               console.warn(`[Scan] Gemini model ${model} returned status ${apiResponse.status}.`);
+              if (apiResponse.status === 429) {
+                console.warn('[Scan] Gemini quota limit reached (HTTP 429). Fast-failing immediately to local OCR engine without quota stalling.');
+                break;
+              }
             }
           } catch (modelErr: any) {
             console.warn(`[Scan] Gemini model ${model} error:`, modelErr.message);
@@ -1034,12 +1089,32 @@ RULES:
         }
 
         if (parsedVisionData) {
+          // Normalize allergenDeclarations: Gemini now returns array of objects; 
+          // keep backward compat by also accepting plain strings.
+          if (Array.isArray(parsedVisionData.allergenDeclarations)) {
+            parsedVisionData.allergenDeclarations = parsedVisionData.allergenDeclarations.map((a: any) =>
+              typeof a === 'string' ? { text: a, needsVerification: false } : a
+            );
+          }
+          // Ensure supplementPanels exists (empty array if not a supplement label)
+          if (!Array.isArray(parsedVisionData.supplementPanels)) {
+            parsedVisionData.supplementPanels = [];
+          }
+          // Log panel count for debugging
+          if (parsedVisionData.supplementPanels.length > 0) {
+            console.log(`[Scan] ${parsedVisionData.supplementPanels.length} separate Supplement Facts panel(s) detected.`);
+          }
+
+          const autoCreatePrompt = `Create compliant FSSAI packaged food label for "${(parsedVisionData.brandName ? parsedVisionData.brandName + ' ' : '')}${parsedVisionData.productName || 'Artisan Food Product'}" in category "${parsedVisionData.category || 'General Packaged Food'}". Net quantity: ${parsedVisionData.netQuantityValue || parsedVisionData.netQuantity || 400}${parsedVisionData.netQuantityUnit || 'g'}. Detected ingredients: ${(parsedVisionData.ingredients || []).map((i: any) => i.name).filter(Boolean).join(', ') || 'Natural artisan ingredients'}. FSSAI: ${parsedVisionData.fssaiLicense || 'Standard 14-digit license'}. Auto-generate statutory allergen declarations, nutrition facts per 100g, and batch traceability.`;
+
           res.json({
             success: true,
             hasReadableText: true,
             extractionMethod: `Google ${successfulModel} Vision (Live Multimodal AI)`,
             isAiProviderConfigured: true,
             extractedData: parsedVisionData,
+            autoCreatePrompt,
+            rawExtractedText: parsedVisionData.rawExtractedText || '',
             meta: {
               fileName: req.file.originalname,
               fileSizeKb: Math.round(req.file.size / 1024),
@@ -1099,13 +1174,162 @@ RULES:
           parsedNetUnit = rawUnit.startsWith('k') ? 'kg' : (rawUnit.startsWith('l') ? 'l' : (rawUnit.startsWith('m') ? 'ml' : 'g'));
         }
 
+        // ----------------------------------------------------------------
+        // Parse visible nutrition facts — multi-format regexes covering:
+        //   "Energy: 250 kcal", "Calories 250", "250 kcal", "Energy  250"
+        //   "Protein 12g", "Protein: 12 g", table-format "Protein  12  40%"
+        // ----------------------------------------------------------------
+        const _findNum = (patterns: RegExp[]): number | null => {
+          for (const re of patterns) {
+            const m = rawText.match(re);
+            if (m) return parseFloat(m[1]);
+          }
+          return null;
+        };
+
+        const energyKcal = _findNum([
+          /energy\s*(?:\(kcal\)|kcal)?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+          /calories?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+          /(\d+(?:\.\d+)?)\s*kcal\b/i,
+        ]);
+        const energyKJ = _findNum([
+          /energy\s*(?:\(kj\)|kj)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+          /(\d+(?:\.\d+)?)\s*kj\b/i,
+        ]);
+        const proteinG = _findNum([
+          /protein\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+          /protein\s+(\d+(?:\.\d+)?)\b/i,
+        ]);
+        const carbG = _findNum([
+          /(?:total\s*)?carbohydrate[s]?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+          /(?:total\s*)?carbs?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+          /carbohydrate[s]?\s+(\d+(?:\.\d+)?)\b/i,
+        ]);
+        const sugarG = _findNum([
+          /total\s*sugars?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+          /sugars?\s+(\d+(?:\.\d+)?)\b/i,
+        ]);
+        const addedSugarG = _findNum([
+          /added\s*sugars?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+        ]);
+        const totalFatG = _findNum([
+          /(?:total\s*)?fat[s]?\s*(?:\(g\)|g)?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+          /fat[s]?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+          /total\s*fat\s+(\d+(?:\.\d+)?)\b/i,
+          /fat\s+(\d+(?:\.\d+)?)\s*g?\b/i,
+        ]);
+        const satFatG = _findNum([
+          /(?:saturated\s*fat[s]?|sat\s*fat)\s*(?:\(g\)|g)?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+          /saturated\s*fat\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+        ]);
+        const transFatG = _findNum([
+          /(?:trans\s*fat[s]?)\s*(?:\(g\)|g)?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+          /trans\s*fat\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g/i,
+        ]);
+        const cholMg = _findNum([
+          /cholesterol\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*mg/i,
+          /cholesterol\s+(\d+(?:\.\d+)?)\b/i,
+        ]);
+        const sodiumMg = _findNum([
+          /sodium\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*mg/i,
+          /sodium\s+(\d+(?:\.\d+)?)\b/i,
+        ]);
+
+        const hasAnyNutrition = Boolean(energyKcal || proteinG || carbG || totalFatG || sodiumMg);
+
+        // ----------------------------------------------------------------
+        // Full ingredient extraction — no arbitrary line cap.
+        // Look for "Ingredients:" section first, else use all body lines.
+        // Allergen check across ALL extracted ingredients.
+        // ----------------------------------------------------------------
+        const allergenTestKeys = [
+          { key: /mustard/i, label: 'Mustard' },
+          { key: /wheat|gluten/i, label: 'Wheat (Gluten)' },
+          { key: /\bmilk\b|dairy|lactose/i, label: 'Milk & Dairy' },
+          { key: /peanut/i, label: 'Peanuts' },
+          { key: /\bsoy\b|soybean/i, label: 'Soybeans' },
+          { key: /sesame/i, label: 'Sesame' },
+          { key: /\begg\b/i, label: 'Eggs' },
+          { key: /\bfish\b|cod\s*liver|anchov|sardine|salmon|tuna/i, label: 'Fish' },
+          { key: /crustacean|shrimp|prawn|crab|lobster/i, label: 'Crustaceans' },
+          { key: /tree\s*nut|almond|cashew|walnut|pistachio|hazelnut/i, label: 'Tree Nuts' },
+          { key: /sulph[ia]t|sulfite/i, label: 'Sulphites' },
+        ];
+
+        // Find ingredient block by looking for "Ingredients:" header
+        let ingredientLines: string[] = [];
+        const ingHeaderIdx = lines.findIndex(l => /^ingredients?\s*[:\-]/i.test(l));
+        if (ingHeaderIdx >= 0) {
+          // Extract from the header line, stop at next labeled section
+          const sectionEndRe = /^(?:nutrition|supplement|allergen|storage|manufactured|best before|batch|lot|net|warning|directions|usage)/i;
+          const headerLine = lines[ingHeaderIdx].replace(/^ingredients?\s*[:\-]\s*/i, '').trim();
+          ingredientLines = headerLine ? [headerLine] : [];
+          for (let i = ingHeaderIdx + 1; i < lines.length; i++) {
+            if (sectionEndRe.test(lines[i])) break;
+            ingredientLines.push(lines[i]);
+          }
+        } else {
+          // Fallback: use all non-header lines (excluding first two which are product/brand)
+          ingredientLines = lines.slice(2);
+        }
+
+        // Split on commas within joined ingredient text
+        const ingredientTokens: string[] = [];
+        for (const line of ingredientLines) {
+          const parts = line.split(',').map(s => s.trim()).filter(s => s.length > 1);
+          ingredientTokens.push(...parts);
+        }
+
+        const detectedAllergenLabels: string[] = [];
+        const parsedIngredients = ingredientTokens.map((token, idx) => {
+          const isAlg = allergenTestKeys.some(a => a.key.test(token));
+          if (isAlg) {
+            allergenTestKeys.forEach(a => {
+              if (a.key.test(token) && !detectedAllergenLabels.includes(a.label)) {
+                detectedAllergenLabels.push(a.label);
+              }
+            });
+          }
+          const pctMatch = token.match(/(\d+(?:\.\d+)?%)/);
+          return {
+            id: `ing-${idx}`,
+            name: token.replace(/\(\d+(?:\.\d+)?%\)/g, '').replace(/[^\w\s,\-().]/g, '').trim(),
+            percentage: pctMatch ? pctMatch[1] : '',
+            order: idx + 1,
+            isAllergen: isAlg,
+          };
+        }).filter(ing => ing.name.length > 0);
+
+        const allergenDeclarations = detectedAllergenLabels.length > 0
+          ? [{ text: `Contains: ${detectedAllergenLabels.join(', ')}. User verification required.`, needsVerification: true }]
+          : [];
+
+        // Evaluate whether OCR text represents food or supplement packaging
+        const foodKeywords = /(?:ingredient|nutrition|supplement|energy|protein|fat|carb|sugar|sodium|kcal|fssai|batch|expiry|mfg|best\s*before|serving|edible|net\s*wt|grams?|ml|flavour|flavor|spice|pickle|oil|flour)/i;
+        const nonFoodKeywords = /(?:tracking\s*#|airway\s*bill|waybill|shipping\s*label|courier|polyester|100%\s*cotton|machine\s*wash|tumble\s*dry|dry\s*clean|appliance|serial\s*no|fcc\s*id|invoice\s*no|receipt\s*#)/i;
+        
+        let isFoodPackaging = true;
+        let unrecognizedTypeReason = '';
+        if (nonFoodKeywords.test(rawText) && !foodKeywords.test(rawText)) {
+          isFoodPackaging = false;
+          unrecognizedTypeReason = 'The scanned document appears to be a shipping label, apparel care tag, or non-food paperwork. Please upload an authentic food or dietary supplement packaging image.';
+        } else if (!foodKeywords.test(rawText) && rawText.length > 50) {
+          isFoodPackaging = false;
+          unrecognizedTypeReason = 'No standard food packaging markings (product title, ingredients, nutrition facts, or net quantity) were recognized. Please upload a clear photo of an authentic food or supplement label.';
+        }
+
+        const autoCreatePrompt = `Create compliant FSSAI packaged food label for "${(lines[1] ? lines[1] + ' ' : '')}${lines[0] || 'Artisan Food Product'}" in category "General Packaged Food". Net quantity: ${parsedNetQty}${parsedNetUnit}. Ingredients: ${parsedIngredients.map(i => i.name).join(', ') || 'Natural artisan ingredients'}. FSSAI: ${fssaiMatch ? fssaiMatch[0] : 'Standard 14-digit license'}. Auto-generate statutory allergen declarations, nutrition facts per 100g, and batch traceability.`;
+
         res.json({
           success: true,
           hasReadableText: true,
           extractionMethod: 'Local Tesseract.js OCR Engine',
           isAiProviderConfigured: Boolean(customKey),
           rawExtractedText: rawText,
+          autoCreatePrompt,
           extractedData: {
+            isFoodPackaging,
+            unrecognizedTypeReason,
             productName: lines[0] || 'Extracted Food Product',
             brandName: lines.length > 1 ? lines[1] : '',
             category: 'General Packaged Food',
@@ -1115,26 +1339,24 @@ RULES:
             batchNumber: batchMatch ? batchMatch[1].trim() : '',
             mfgDate: '',
             expiryDate: '',
-            ingredients: lines.slice(2, 8).map((line, idx) => ({
-              id: `ing-${idx}`,
-              name: line.replace(/[^\w\s]/g, '').trim(),
-              percentage: '',
-              order: idx + 1,
-              isAllergen: /mustard|wheat|milk|nut|peanut|sesame|soy/i.test(line),
-            })),
-            allergenDeclarations: [],
+            ingredients: parsedIngredients,
+            allergenDeclarations,
+            supplementPanels: [],
             nutrition: {
               servingBasis: 'per 100g',
               servingSize: '100g',
-              energyKcal: null,
-              proteinG: null,
-              carbohydratesG: null,
-              totalSugarsG: null,
-              addedSugarsG: null,
-              totalFatG: null,
-              saturatedFatG: null,
-              transFatG: null,
-              sodiumMg: null,
+              energyKcal,
+              energyKJ,
+              proteinG,
+              carbohydratesG: carbG,
+              totalSugarsG: sugarG,
+              addedSugarsG: addedSugarG,
+              totalFatG,
+              saturatedFatG: satFatG,
+              transFatG,
+              cholesterolMg: cholMg,
+              sodiumMg,
+              additionalNutrients: [],
             },
             storageInstructions: 'Store in a cool dry place.',
             manufacturer: {
@@ -1149,8 +1371,9 @@ RULES:
             },
             lowConfidenceFields: [
               ...(!qtyMatch ? [{ field: 'Net Quantity', reason: 'Net quantity not clearly recognized on packaging.' }] : []),
-              ...(!fssaiMatch ? [{ field: 'FSSAI License', reason: '14-digit FSSAI license number not detected.' }] : []),
-              { field: 'Nutrition Facts', reason: 'Nutrition assay values must be confirmed manually.' }
+              ...(!fssaiMatch ? [{ field: 'FSSAI License', reason: '14-digit FSSAI license number not detected on packaging.' }] : []),
+              ...(!hasAnyNutrition ? [{ field: 'Nutrition Facts', reason: 'Nutrition assay values not found on packaging. Verify from lab test or ICMR-NIN specification.' }] : []),
+              ...(allergenDeclarations.length > 0 ? [{ field: 'Allergen Declarations', reason: 'Allergens detected from ingredient text — please verify against source label.' }] : []),
             ]
           },
           meta: {

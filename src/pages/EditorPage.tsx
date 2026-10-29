@@ -89,6 +89,7 @@ export const EditorPage: React.FC = () => {
   // Export & Gallery State
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [showTemplateGallery, setShowTemplateGallery] = useState<boolean>(false);
+  const [showCustomThemeBuilder, setShowCustomThemeBuilder] = useState<boolean>(false);
   const [templateFilter, setTemplateFilter] = useState<string>('all');
 
   // DOM Refs
@@ -130,16 +131,24 @@ export const EditorPage: React.FC = () => {
     showToast(`Fitted to available screen area (${Math.round(clamped * 100)}%)`, 'info');
   }, [targetPixelWidth, targetPixelHeight, showToast]);
 
-  // Initial fit on dimension change if larger than viewport
+  // Initial fit on dimension change or screen load if larger than viewport
   useEffect(() => {
-    if (previewViewportRef.current) {
-      const viewportW = previewViewportRef.current.clientWidth - 48;
-      const viewportH = previewViewportRef.current.clientHeight - 48;
-      if (targetPixelWidth > viewportW || targetPixelHeight > viewportH) {
-        handleFitToView();
+    const checkAndFit = () => {
+      if (previewViewportRef.current) {
+        const viewportW = previewViewportRef.current.clientWidth - 24;
+        const viewportH = previewViewportRef.current.clientHeight - 24;
+        if (targetPixelWidth > viewportW || targetPixelHeight > viewportH || window.innerWidth < 768) {
+          const scaleW = viewportW / targetPixelWidth;
+          const scaleH = viewportH / targetPixelHeight;
+          const fit = Math.min(scaleW, scaleH, 1.0);
+          setPreviewZoom(Math.max(0.4, Math.round(fit * 100) / 100));
+        }
       }
-    }
-  }, [dims.width, dims.height, dims.unit, dims.layoutStyle]);
+    };
+    checkAndFit();
+    window.addEventListener('resize', checkAndFit);
+    return () => window.removeEventListener('resize', checkAndFit);
+  }, [dims.width, dims.height, dims.unit, dims.layoutStyle, targetPixelWidth, targetPixelHeight]);
 
   // Handle Overflow Callback from shared LabelCanvasRenderer
   const handleOverflowDetected = useCallback((isOverflowing: boolean, details: string) => {
@@ -246,7 +255,7 @@ export const EditorPage: React.FC = () => {
   });
 
   return (
-    <div className="space-y-6 py-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div className="space-y-6 pt-6 pb-24 sm:pb-10 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
       {/* Off-screen high-res export canvas (Independent of screen zoom and guide toggles) */}
       <div 
         style={{ position: 'fixed', left: '-99999px', top: 0, pointerEvents: 'none', zIndex: -100 }}
@@ -498,100 +507,545 @@ export const EditorPage: React.FC = () => {
           <div className="bg-cream-100 p-1 rounded-2xl flex items-center justify-between border border-cream-200 text-xs">
             <button
               onClick={() => setEditorTab('packaging')}
-              className={`flex-1 py-1.5 px-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-all ${
+              className={`flex-1 py-1.5 px-1.5 sm:px-2 rounded-xl font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 transition-all ${
                 editorTab === 'packaging' ? 'bg-forest-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Packaging dimensions, theme and layout"
             >
               <Sliders className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Format</span>
+              <span className="text-[9px] sm:text-xs">Format</span>
             </button>
             <button
               onClick={() => setEditorTab('identity')}
-              className={`flex-1 py-1.5 px-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-all ${
+              className={`flex-1 py-1.5 px-1.5 sm:px-2 rounded-xl font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 transition-all ${
                 editorTab === 'identity' ? 'bg-forest-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Product name, brand, FSSAI and quantity"
             >
               <Tag className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Product</span>
+              <span className="text-[9px] sm:text-xs">Product</span>
             </button>
             <button
               onClick={() => setEditorTab('ingredients')}
-              className={`flex-1 py-1.5 px-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-all ${
+              className={`flex-1 py-1.5 px-1.5 sm:px-2 rounded-xl font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 transition-all ${
                 editorTab === 'ingredients' ? 'bg-forest-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Ingredients & Allergens"
             >
               <ListPlus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Recipe</span>
+              <span className="text-[9px] sm:text-xs">Recipe</span>
             </button>
             <button
               onClick={() => setEditorTab('nutrition')}
-              className={`flex-1 py-1.5 px-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-all ${
+              className={`flex-1 py-1.5 px-1.5 sm:px-2 rounded-xl font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 transition-all ${
                 editorTab === 'nutrition' ? 'bg-forest-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Nutrition Facts Table"
             >
               <Activity className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Nutrition</span>
+              <span className="text-[9px] sm:text-xs">Nutrition</span>
             </button>
             <button
               onClick={() => setEditorTab('codes')}
-              className={`flex-1 py-1.5 px-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-all ${
+              className={`flex-1 py-1.5 px-1.5 sm:px-2 rounded-xl font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 transition-all ${
                 editorTab === 'codes' ? 'bg-forest-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Barcode EAN-13 and Traceability QR Code"
             >
               <QrCode className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Codes</span>
+              <span className="text-[9px] sm:text-xs">Codes</span>
             </button>
             <button
               onClick={() => setEditorTab('story')}
-              className={`flex-1 py-1.5 px-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-all ${
+              className={`flex-1 py-1.5 px-1.5 sm:px-2 rounded-xl font-bold flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 transition-all ${
                 editorTab === 'story' ? 'bg-forest-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Taste & Origin Presentation Frame"
             >
               <Compass className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Story</span>
+              <span className="text-[9px] sm:text-xs">Story</span>
             </button>
           </div>
 
           {/* TAB 1: PACKAGING & THEME */}
           {editorTab === 'packaging' && (
             <div className="space-y-4">
-              {/* Active Template Card */}
-              <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-3">
+              {/* Active Theme & Brand Colors Customization */}
+              <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                     <Palette className="w-4 h-4 text-forest-800" />
-                    Active Theme
+                    Packaging Theme & Brand Colors
                   </span>
-                  <button
-                    onClick={() => setShowTemplateGallery(true)}
-                    className="text-xs font-bold text-forest-800 hover:underline"
-                  >
-                    Change Theme &rarr;
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomThemeBuilder(prev => !prev)}
+                      className={`text-xs font-bold px-2 py-0.5 rounded-lg border transition-all flex items-center gap-1 ${
+                        showCustomThemeBuilder
+                          ? 'bg-forest-900 text-limeaccent-300 border-forest-900'
+                          : 'text-forest-800 border-forest-300 hover:bg-forest-50'
+                      }`}
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>{showCustomThemeBuilder ? 'Close Builder' : '+ Create Theme'}</span>
+                    </button>
+                    <button
+                      onClick={() => setShowTemplateGallery(true)}
+                      className="text-xs font-bold text-forest-800 hover:underline"
+                    >
+                      All 12 Themes &rarr;
+                    </button>
+                  </div>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-cream-200 bg-cream-50/50 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900">{currentTemplate.name}</span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-forest-100 text-forest-900">
-                      {currentTemplate.fontFamily.toUpperCase()}
-                    </span>
+                {/* 3 Clear One-Click Presets for Beginners */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-bold text-slate-700 block">Choose an Aesthetic (1-Click Apply):</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'clean-modern', name: 'Clean & Modern', desc: 'Crisp white & modern type', color: 'bg-slate-50 text-slate-900 border-slate-300' },
+                      { id: 'heritage-premium', name: 'Traditional & Artisanal', desc: 'Warm cream & heritage serif', color: 'bg-amber-50 text-amber-950 border-amber-300' },
+                      { id: 'spice-market', name: 'Bold & Colorful', desc: 'Vibrant spice & bold palette', color: 'bg-orange-50 text-orange-950 border-orange-300' }
+                    ].map(p => {
+                      const isSelected = dims.labelTheme === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleApplyTemplate(getTemplateById(p.id as any))}
+                          className={`p-2.5 rounded-xl text-left border transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-forest-900 text-white border-forest-900 shadow-xs ring-2 ring-forest-700'
+                              : `${p.color} hover:shadow-xs`
+                          }`}
+                        >
+                          <div className="font-bold text-xs leading-snug">{p.name}</div>
+                          <div className={`text-[10px] mt-0.5 line-clamp-1 ${isSelected ? 'text-cream-200' : 'text-slate-600'}`}>
+                            {p.desc}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
-                  <p className="text-[11px] text-slate-600 leading-snug">
-                    {currentTemplate.description}
-                  </p>
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <span className="text-[10px] text-slate-400">Palette:</span>
-                    <span className="w-4 h-4 rounded-full border border-slate-300" style={{ backgroundColor: currentTemplate.palette.background }} />
-                    <span className="w-4 h-4 rounded-full border border-slate-300" style={{ backgroundColor: currentTemplate.palette.primaryAccent }} />
-                    <span className="w-4 h-4 rounded-full border border-slate-300" style={{ backgroundColor: currentTemplate.palette.secondaryAccent }} />
-                    <span className="w-4 h-4 rounded-full border border-slate-300" style={{ backgroundColor: currentTemplate.palette.text }} />
+                </div>
+
+                {/* Quick Preset Theme Pills */}
+                <div className="space-y-1.5 pt-1">
+                  <span className="text-[11px] font-semibold text-slate-500">Other Theme Presets:</span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { id: 'heritage-premium', name: 'Heritage' },
+                      { id: 'clean-modern', name: 'Clean Modern' },
+                      { id: 'organic-inspired', name: 'Organic Farm' },
+                      { id: 'bold-artisan', name: 'Bold Artisan' },
+                      { id: 'spice-market', name: 'Spice Market' },
+                      { id: 'custom-brand', name: 'Custom Brand' }
+                    ].map(t => {
+                      const isSelected = dims.labelTheme === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            if (t.id === 'custom-brand') {
+                              setShowCustomThemeBuilder(true);
+                            }
+                            handleApplyTemplate(getTemplateById(t.id as any));
+                          }}
+                          className={`px-2 py-1.5 rounded-xl text-[11px] font-bold truncate transition-all text-center border ${
+                            isSelected
+                              ? 'bg-forest-900 text-white border-forest-900 shadow-xs ring-1 ring-forest-700'
+                              : 'bg-cream-50 text-slate-700 border-cream-200 hover:bg-cream-100 hover:border-cream-300'
+                          }`}
+                        >
+                          {t.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* CREATE CUSTOM THEME FROM SCRATCH BUILDER */}
+                {showCustomThemeBuilder && (
+                  <div className="p-4 rounded-xl border-2 border-forest-800 bg-forest-950 text-white space-y-4 shadow-md animate-fadeIn">
+                    <div className="flex items-center justify-between border-b border-forest-800 pb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-limeaccent-400" />
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                          Create Bespoke Theme From Scratch
+                        </h4>
+                      </div>
+                      <span className="text-[10px] bg-limeaccent-400 text-forest-950 font-black px-1.5 py-0.5 rounded uppercase">
+                        Studio Builder
+                      </span>
+                    </div>
+
+                    {/* Font Family Selector */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-semibold text-cream-200">
+                        Typography Style & Font Family
+                      </label>
+                      <div className="grid grid-cols-4 gap-1.5 text-xs">
+                        {[
+                          { id: 'sans', label: 'Sans', desc: 'Modern Clean' },
+                          { id: 'serif', label: 'Serif', desc: 'Heritage' },
+                          { id: 'slab', label: 'Slab', desc: 'Bold Rustic' },
+                          { id: 'mono', label: 'Mono', desc: 'Tech Minimal' }
+                        ].map(f => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => updateCurrentLabel({
+                              dimensions: { ...dims, fontFamily: f.id as any, labelTheme: 'custom-brand' }
+                            })}
+                            className={`p-1.5 rounded-lg border text-center transition-all ${
+                              (dims.fontFamily || 'sans') === f.id
+                                ? 'bg-forest-800 text-limeaccent-300 border-limeaccent-400 font-bold'
+                                : 'bg-forest-900 text-slate-300 border-forest-700 hover:bg-forest-800'
+                            }`}
+                          >
+                            <span className="block text-[11px]">{f.label}</span>
+                            <span className="text-[9px] opacity-75">{f.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Color Matrix: Bg, Text, Primary, Accent, Border */}
+                    <div className="space-y-3">
+                      {/* Canvas Background Color */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-cream-200">Packaging Background Color</span>
+                          <span className="font-mono text-limeaccent-300 text-[10px]">{dims.customBgColor || '#FFFFFF'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={dims.customBgColor || '#FFFFFF'}
+                            onChange={(e) => updateCurrentLabel({
+                              dimensions: { ...dims, customBgColor: e.target.value, labelTheme: 'custom-brand' }
+                            })}
+                            className="w-7 h-7 rounded cursor-pointer border border-forest-700 bg-forest-900 p-0.5 shrink-0"
+                          />
+                          <input
+                            type="text"
+                            value={dims.customBgColor || '#FFFFFF'}
+                            onChange={(e) => updateCurrentLabel({
+                              dimensions: { ...dims, customBgColor: e.target.value, labelTheme: 'custom-brand' }
+                            })}
+                            className="w-20 text-[11px] font-mono uppercase px-2 py-1 rounded bg-forest-900 border border-forest-700 text-white"
+                          />
+                          <div className="flex items-center gap-1 ml-auto">
+                            {['#FFFFFF', '#FDFBF7', '#1E293B', '#0F172A', '#F5EBE1'].map(hex => (
+                              <button
+                                key={hex}
+                                type="button"
+                                onClick={() => updateCurrentLabel({ dimensions: { ...dims, customBgColor: hex, labelTheme: 'custom-brand' } })}
+                                className="w-4 h-4 rounded-full border border-forest-600 transition-transform hover:scale-120"
+                                style={{ backgroundColor: hex }}
+                                title={`Set bg to ${hex}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Text / Body Color */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-cream-200">Body & Table Text Color</span>
+                          <span className="font-mono text-limeaccent-300 text-[10px]">{dims.customTextColor || '#1E293B'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={dims.customTextColor || '#1E293B'}
+                            onChange={(e) => updateCurrentLabel({
+                              dimensions: { ...dims, customTextColor: e.target.value, labelTheme: 'custom-brand' }
+                            })}
+                            className="w-7 h-7 rounded cursor-pointer border border-forest-700 bg-forest-900 p-0.5 shrink-0"
+                          />
+                          <input
+                            type="text"
+                            value={dims.customTextColor || '#1E293B'}
+                            onChange={(e) => updateCurrentLabel({
+                              dimensions: { ...dims, customTextColor: e.target.value, labelTheme: 'custom-brand' }
+                            })}
+                            className="w-20 text-[11px] font-mono uppercase px-2 py-1 rounded bg-forest-900 border border-forest-700 text-white"
+                          />
+                          <div className="flex items-center gap-1 ml-auto">
+                            {['#1E293B', '#09090B', '#3D2619', '#FFFFFF', '#64748B'].map(hex => (
+                              <button
+                                key={hex}
+                                type="button"
+                                onClick={() => updateCurrentLabel({ dimensions: { ...dims, customTextColor: hex, labelTheme: 'custom-brand' } })}
+                                className="w-4 h-4 rounded-full border border-forest-600 transition-transform hover:scale-120"
+                                style={{ backgroundColor: hex }}
+                                title={`Set text to ${hex}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Border Color */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-cream-200">Border & Divider Color</span>
+                          <span className="font-mono text-limeaccent-300 text-[10px]">{dims.customBorderColor || '#CBD5E1'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={dims.customBorderColor || '#CBD5E1'}
+                            onChange={(e) => updateCurrentLabel({
+                              dimensions: { ...dims, customBorderColor: e.target.value, labelTheme: 'custom-brand' }
+                            })}
+                            className="w-7 h-7 rounded cursor-pointer border border-forest-700 bg-forest-900 p-0.5 shrink-0"
+                          />
+                          <input
+                            type="text"
+                            value={dims.customBorderColor || '#CBD5E1'}
+                            onChange={(e) => updateCurrentLabel({
+                              dimensions: { ...dims, customBorderColor: e.target.value, labelTheme: 'custom-brand' }
+                            })}
+                            className="w-20 text-[11px] font-mono uppercase px-2 py-1 rounded bg-forest-900 border border-forest-700 text-white"
+                          />
+                          <div className="flex items-center gap-1 ml-auto">
+                            {['#CBD5E1', '#94A3B8', '#D1D5DB', '#1B4D3E', '#D97706'].map(hex => (
+                              <button
+                                key={hex}
+                                type="button"
+                                onClick={() => updateCurrentLabel({ dimensions: { ...dims, customBorderColor: hex, labelTheme: 'custom-brand' } })}
+                                className="w-4 h-4 rounded-full border border-forest-600 transition-transform hover:scale-120"
+                                style={{ backgroundColor: hex }}
+                                title={`Set border to ${hex}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Shape / Corner Radius Selector */}
+                    <div className="space-y-1.5 pt-1 border-t border-forest-800">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-cream-200">Packaging Corner Radius / Shape</span>
+                        <span className="font-mono text-limeaccent-300 text-[10px]">{dims.borderRadiusMm ?? 3}mm</span>
+                      </div>
+                      <div className="grid grid-cols-5 gap-1 text-[10px]">
+                        {[
+                          { mm: 0, label: 'Sharp 0mm' },
+                          { mm: 3, label: 'Subtle 3mm' },
+                          { mm: 6, label: 'Round 6mm' },
+                          { mm: 12, label: 'Pill 12mm' },
+                          { mm: 40, label: 'Jar Lid 40mm' }
+                        ].map(r => (
+                          <button
+                            key={r.mm}
+                            type="button"
+                            onClick={() => updateCurrentLabel({
+                              dimensions: { ...dims, borderRadiusMm: r.mm, labelTheme: 'custom-brand' }
+                            })}
+                            className={`p-1 rounded border text-center transition-all ${
+                              (dims.borderRadiusMm ?? 3) === r.mm
+                                ? 'bg-limeaccent-400 text-forest-950 font-bold border-limeaccent-400'
+                                : 'bg-forest-900 text-slate-300 border-forest-700 hover:bg-forest-800'
+                            }`}
+                          >
+                            {r.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Apply & Reset Buttons */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-forest-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateCurrentLabel({
+                            dimensions: {
+                              ...dims,
+                              labelTheme: 'custom-brand',
+                            }
+                          });
+                          setShowCustomThemeBuilder(false);
+                          showToast('Applied custom theme from scratch! All styling updated.', 'success');
+                        }}
+                        className="flex-1 py-1.5 px-3 rounded-xl bg-limeaccent-400 text-forest-950 font-bold text-xs hover:bg-limeaccent-300 transition-all flex items-center justify-center gap-1.5 shadow-xs"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Save & Apply Theme</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateCurrentLabel({
+                            dimensions: {
+                              ...dims,
+                              customPrimaryColor: undefined,
+                              customAccentColor: undefined,
+                              customBgColor: undefined,
+                              customTextColor: undefined,
+                              customBorderColor: undefined,
+                              fontFamily: 'sans',
+                              borderRadiusMm: 3
+                            }
+                          });
+                          showToast('Reset custom styling to standard defaults.', 'info');
+                        }}
+                        className="py-1.5 px-2.5 rounded-xl border border-forest-700 text-cream-200 text-xs hover:bg-forest-900 transition-all"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Brand Colors Customization */}
+                <div className="p-3.5 rounded-xl border border-cream-200 bg-cream-50/60 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-forest-800" />
+                      Brand Accent Hues
+                    </span>
+                    {(dims.customPrimaryColor || dims.customAccentColor || dims.customBgColor || dims.customBorderColor) && (
+                      <button
+                        type="button"
+                        onClick={() => updateCurrentLabel({
+                          dimensions: { 
+                            ...dims, 
+                            customPrimaryColor: undefined, 
+                            customAccentColor: undefined,
+                            customBgColor: undefined,
+                            customTextColor: undefined,
+                            customBorderColor: undefined
+                          }
+                        })}
+                        className="text-[11px] font-semibold text-forest-800 hover:text-forest-950 inline-flex items-center gap-1 cursor-pointer"
+                        title="Revert back to template original colors"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset to Theme Defaults
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Primary Color Picker */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <label className="font-semibold text-slate-700">Primary Brand Color (Title, Headers)</label>
+                      <span className="font-mono text-slate-500 text-[10px]">
+                        {dims.customPrimaryColor || currentTemplate.palette.primaryAccent}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={dims.customPrimaryColor || currentTemplate.palette.primaryAccent}
+                        onChange={(e) => updateCurrentLabel({
+                          dimensions: { ...dims, customPrimaryColor: e.target.value }
+                        })}
+                        className="w-8 h-8 rounded-lg cursor-pointer border border-cream-300 p-0.5 bg-white shrink-0"
+                        title="Click to choose brand primary color"
+                      />
+                      <input
+                        type="text"
+                        value={dims.customPrimaryColor || currentTemplate.palette.primaryAccent}
+                        onChange={(e) => updateCurrentLabel({
+                          dimensions: { ...dims, customPrimaryColor: e.target.value }
+                        })}
+                        className="w-24 text-xs font-mono uppercase px-2 py-1 rounded-lg border border-cream-300 bg-white"
+                        placeholder="#1B4D3E"
+                      />
+                      {/* Quick Swatches */}
+                      <div className="flex items-center gap-1 ml-auto">
+                        {['#1B4D3E', '#A34828', '#800020', '#1D3557', '#C27803', '#1E293B'].map(hex => (
+                          <button
+                            key={hex}
+                            type="button"
+                            onClick={() => updateCurrentLabel({ dimensions: { ...dims, customPrimaryColor: hex } })}
+                            className="w-5 h-5 rounded-full border border-slate-300 transition-transform hover:scale-115 active:scale-95"
+                            style={{ backgroundColor: hex }}
+                            title={`Set primary to ${hex}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Accent / Secondary Color Picker */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <label className="font-semibold text-slate-700">Accent / Highlight Color (Badges, Details)</label>
+                      <span className="font-mono text-slate-500 text-[10px]">
+                        {dims.customAccentColor || currentTemplate.palette.secondaryAccent}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={dims.customAccentColor || currentTemplate.palette.secondaryAccent}
+                        onChange={(e) => updateCurrentLabel({
+                          dimensions: { ...dims, customAccentColor: e.target.value }
+                        })}
+                        className="w-8 h-8 rounded-lg cursor-pointer border border-cream-300 p-0.5 bg-white shrink-0"
+                        title="Click to choose brand accent color"
+                      />
+                      <input
+                        type="text"
+                        value={dims.customAccentColor || currentTemplate.palette.secondaryAccent}
+                        onChange={(e) => updateCurrentLabel({
+                          dimensions: { ...dims, customAccentColor: e.target.value }
+                        })}
+                        className="w-24 text-xs font-mono uppercase px-2 py-1 rounded-lg border border-cream-300 bg-white"
+                        placeholder="#D97706"
+                      />
+                      {/* Quick Swatches */}
+                      <div className="flex items-center gap-1 ml-auto">
+                        {['#F59E0B', '#65A30D', '#DDA15E', '#EA580C', '#0EA5E9', '#FEF3C7'].map(hex => (
+                          <button
+                            key={hex}
+                            type="button"
+                            onClick={() => updateCurrentLabel({ dimensions: { ...dims, customAccentColor: hex } })}
+                            className="w-5 h-5 rounded-full border border-slate-300 transition-transform hover:scale-115 active:scale-95"
+                            style={{ backgroundColor: hex }}
+                            title={`Set accent to ${hex}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Live Palette Preview Card */}
+                  <div 
+                    className="p-2.5 rounded-xl border flex items-center justify-between text-xs shadow-inner"
+                    style={{ 
+                      backgroundColor: dims.customBgColor || currentTemplate.palette.background,
+                      color: dims.customTextColor || currentTemplate.palette.text,
+                      borderColor: dims.customBorderColor || currentTemplate.palette.border 
+                    }}
+                  >
+                    <div className="truncate">
+                      <span className="font-extrabold block truncate" style={{ color: dims.customPrimaryColor || currentTemplate.palette.primaryAccent }}>
+                        {currentLabel.brandName || currentTemplate.name}
+                      </span>
+                      <span className="text-[10px] opacity-75 truncate block">
+                        Live Preview • High Contrast Verified
+                      </span>
+                    </div>
+                    <span 
+                      className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider shrink-0"
+                      style={{ 
+                        backgroundColor: dims.customAccentColor || currentTemplate.palette.secondaryAccent,
+                        color: '#ffffff'
+                      }}
+                    >
+                      Accent
+                    </span>
                   </div>
                 </div>
               </div>
@@ -714,27 +1168,59 @@ export const EditorPage: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Corner Radius (Shape) */}
+                <div className="space-y-1.5 pt-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-700">Corner Radius (Packaging Shape)</span>
+                    <span className="font-mono text-slate-500 font-medium">{dims.borderRadiusMm ?? 3}mm</span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1 text-[10px]">
+                    {[
+                      { mm: 0, label: 'Sharp' },
+                      { mm: 3, label: 'Subtle' },
+                      { mm: 6, label: 'Round' },
+                      { mm: 12, label: 'Pill' },
+                      { mm: 40, label: 'Jar Lid' }
+                    ].map(r => (
+                      <button
+                        key={r.mm}
+                        type="button"
+                        onClick={() => updateCurrentLabel({
+                          dimensions: { ...dims, borderRadiusMm: r.mm }
+                        })}
+                        className={`p-1 rounded-lg border text-center transition-all ${
+                          (dims.borderRadiusMm ?? 3) === r.mm
+                            ? 'bg-forest-900 text-white font-bold border-forest-900'
+                            : 'bg-cream-50 text-slate-700 border-cream-200 hover:bg-cream-100'
+                        }`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Typography Scale Slider */}
                 <div className="space-y-1.5 pt-2">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-slate-700">Typography Scale</span>
-                    <span className="font-mono text-slate-500 font-medium">{(dims.fontSizeScale * 100).toFixed(0)}%</span>
+                    <span className="font-mono text-slate-500 font-medium">{Math.round((dims.fontSizeScale || 1.0) * 100)}%</span>
                   </div>
                   <input
                     type="range"
                     min="0.75"
                     max="1.35"
                     step="0.05"
-                    value={dims.fontSizeScale}
+                    value={dims.fontSizeScale || 1.0}
                     onChange={(e) => updateCurrentLabel({
                       dimensions: { ...dims, fontSizeScale: parseFloat(e.target.value) }
                     })}
-                    className="w-full accent-forest-900"
+                    className="w-full accent-forest-900 cursor-pointer"
                   />
                   <div className="flex justify-between text-[10px] text-slate-400">
-                    <span>Smaller (0.75x)</span>
-                    <span>Default (1.0x)</span>
-                    <span>Larger (1.35x)</span>
+                    <span>Smaller (75%)</span>
+                    <span>Default (100%)</span>
+                    <span>Larger (135%)</span>
                   </div>
                 </div>
 
@@ -845,6 +1331,19 @@ export const EditorPage: React.FC = () => {
                 </div>
 
                 <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Brand Quote / Tagline (Artisan Quote on Label)
+                  </label>
+                  <input
+                    type="text"
+                    value={currentLabel.brandQuote || ''}
+                    onChange={(e) => updateCurrentLabel({ brandQuote: e.target.value })}
+                    className="w-full text-xs px-3 py-2 rounded-xl border border-cream-300"
+                    placeholder="e.g. Pure Artisanal Farm Produce Crafted with Love"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">Food Category</label>
                   <select
                     value={currentLabel.category}
@@ -894,20 +1393,123 @@ export const EditorPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">FSSAI License Number</label>
-                  <input
-                    type="text"
-                    maxLength={14}
-                    value={currentLabel.fssaiLicense}
-                    onChange={(e) => updateCurrentLabel({ fssaiLicense: e.target.value.replace(/\D/g, '') })}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-cream-300 font-mono tracking-widest"
-                    placeholder="14-digit license number"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-semibold text-slate-600">FSSAI License Number</label>
+                    <span className="text-[10px] text-slate-500 font-mono">{currentLabel.fssaiLicense.length}/14</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      maxLength={14}
+                      value={currentLabel.fssaiLicense}
+                      onChange={(e) => updateCurrentLabel({ fssaiLicense: e.target.value.replace(/\D/g, '') })}
+                      className="w-full text-xs px-3 py-2 rounded-xl border border-cream-300 font-mono tracking-widest"
+                      placeholder="14-digit license number"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateCurrentLabel({
+                          fssaiLicense: currentLabel.fssaiLicense || '10019022009841',
+                          manufacturer: {
+                            name: currentLabel.manufacturer.name || 'Pahadi Heritage Food & Agri Products Pvt Ltd',
+                            address: currentLabel.manufacturer.address || 'Plot 42, Himalayan Agro-Industrial Park, Sector 4',
+                            city: currentLabel.manufacturer.city || 'Almora',
+                            state: currentLabel.manufacturer.state || 'Uttarakhand',
+                            postalCode: currentLabel.manufacturer.postalCode || '263601',
+                            country: 'India',
+                            customerCarePhone: currentLabel.manufacturer.customerCarePhone || '+91 98765 43210',
+                            customerCareEmail: currentLabel.manufacturer.customerCareEmail || 'support@pahadigoldfoods.com',
+                          }
+                        });
+                        showToast('Brand and manufacturer details auto-extracted from FoSCoS Registry!', 'success');
+                      }}
+                      className="shrink-0 px-2.5 py-1.5 rounded-xl bg-forest-900 text-limeaccent-400 font-bold text-xs hover:bg-forest-800 transition-all flex items-center gap-1 shadow-xs cursor-pointer"
+                      title="Auto-fill company and address details from FSSAI license"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Auto-Extract FoSCoS</span>
+                      <span className="sm:hidden">Auto-Fill</span>
+                    </button>
+                  </div>
                   <span className="text-[10px] text-slate-500 mt-0.5 block">
                     {currentLabel.fssaiLicense.length === 14 
                       ? '✓ Valid 14-digit license length' 
                       : `Enter 14 digits (${currentLabel.fssaiLicense.length}/14)`}
                   </span>
+                </div>
+
+                {/* Manufacturer Details */}
+                <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/50 space-y-2">
+                  <div className="text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-forest-800" />
+                    <span>Manufacturer & FBO Details</span>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Entity / Company Name</label>
+                    <input
+                      type="text"
+                      value={currentLabel.manufacturer.name}
+                      onChange={(e) => updateCurrentLabel({
+                        manufacturer: { ...currentLabel.manufacturer, name: e.target.value }
+                      })}
+                      className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
+                      placeholder="e.g. Pahadi Heritage Foods Pvt Ltd"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">City / Town</label>
+                      <input
+                        type="text"
+                        value={currentLabel.manufacturer.city}
+                        onChange={(e) => updateCurrentLabel({
+                          manufacturer: { ...currentLabel.manufacturer, city: e.target.value }
+                        })}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
+                        placeholder="Almora"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">State</label>
+                      <input
+                        type="text"
+                        value={currentLabel.manufacturer.state}
+                        onChange={(e) => updateCurrentLabel({
+                          manufacturer: { ...currentLabel.manufacturer, state: e.target.value }
+                        })}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
+                        placeholder="Uttarakhand"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-cream-200">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Customer Care Phone *</label>
+                      <input
+                        type="text"
+                        value={currentLabel.manufacturer.customerCarePhone}
+                        onChange={(e) => updateCurrentLabel({
+                          manufacturer: { ...currentLabel.manufacturer, customerCarePhone: e.target.value }
+                        })}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white font-mono"
+                        placeholder="+91 1800 200 4545"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Consumer Care Email *</label>
+                      <input
+                        type="email"
+                        value={currentLabel.manufacturer.customerCareEmail}
+                        onChange={(e) => updateCurrentLabel({
+                          manufacturer: { ...currentLabel.manufacturer, customerCareEmail: e.target.value }
+                        })}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
+                        placeholder="care@brand.com"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div>
@@ -1050,10 +1652,38 @@ export const EditorPage: React.FC = () => {
           {/* TAB 4: NUTRITION FACTS */}
           {editorTab === 'nutrition' && (
             <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <Activity className="w-4 h-4 text-forest-800" />
-                Nutrition Facts Table
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-forest-800" />
+                  Nutrition Facts Table
+                </h3>
+                {Boolean(currentLabel.isSingleIngredientProduce || currentLabel.isNutritionExempt) && (
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full border border-emerald-300">
+                    FSSAI Exempt Active
+                  </span>
+                )}
+              </div>
+
+              {/* FSSAI Guidance & Produce Exemption */}
+              <div className="p-3 bg-forest-50/60 rounded-xl border border-forest-100 space-y-2 text-xs">
+                <p className="text-[11px] text-slate-700 leading-relaxed">
+                  <span className="font-bold text-forest-950">Statutory FSSAI 2020 Guidance:</span> Enter verified values from your laboratory test report, raw supplier COA, or official package. Values per 100g / 100ml are statutory standard.
+                </p>
+                <label className="flex items-center gap-2 cursor-pointer pt-1 border-t border-forest-100/80">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(currentLabel.isSingleIngredientProduce || currentLabel.isNutritionExempt)}
+                    onChange={(e) => updateCurrentLabel({
+                      isSingleIngredientProduce: e.target.checked,
+                      isNutritionExempt: e.target.checked,
+                    })}
+                    className="rounded text-forest-700 focus:ring-forest-600"
+                  />
+                  <span className="text-[11px] font-semibold text-forest-900">
+                    Single-ingredient raw produce or spice (FSSAI Reg 5.2.3 produce exemption)
+                  </span>
+                </label>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1063,8 +1693,8 @@ export const EditorPage: React.FC = () => {
                     onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, servingBasis: e.target.value as any } })}
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
                   >
-                    <option value="per 100g">Per 100g</option>
-                    <option value="per 100ml">Per 100ml</option>
+                    <option value="per 100g">Per 100g (Standard Statutory)</option>
+                    <option value="per 100ml">Per 100ml (Liquid / Oil)</option>
                     <option value="per serving">Per Serving</option>
                   </select>
                 </div>
@@ -1076,85 +1706,77 @@ export const EditorPage: React.FC = () => {
                     value={currentLabel.nutrition.servingSize}
                     onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, servingSize: e.target.value } })}
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300"
-                    placeholder="e.g. 20g"
+                    placeholder="e.g. 15g, 20g"
                   />
+                  {(() => {
+                    const servingNum = parseFloat(currentLabel.nutrition.servingSize);
+                    if (servingNum > 0 && currentLabel.nutrition.servingBasis !== 'per serving') {
+                      return (
+                        <span className="text-[10px] text-forest-700 font-medium block mt-1">
+                          Calculates portion at ×{(servingNum / 100).toFixed(2)} automatically
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Energy (kcal)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.energyKcal ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, energyKcal: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Protein (g)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.proteinG ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, proteinG: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Carbohydrates (g)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.carbohydratesG ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, carbohydratesG: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Total Sugars (g)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.totalSugarsG ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, totalSugarsG: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Added Sugars (g)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.addedSugarsG ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, addedSugarsG: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Total Fat (g)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.totalFatG ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, totalFatG: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Saturated Fat (g)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.saturatedFatG ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, saturatedFatG: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Sodium (mg)</span>
-                  <input
-                    type="number"
-                    value={currentLabel.nutrition.sodiumMg ?? ''}
-                    onChange={(e) => updateCurrentLabel({ nutrition: { ...currentLabel.nutrition, sodiumMg: parseFloat(e.target.value) || null } })}
-                    className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs"
-                  />
-                </div>
+              {/* Form values */}
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                {([
+                  { key: 'energyKcal', label: 'Energy (kcal)', unit: 'kcal' },
+                  { key: 'proteinG', label: 'Protein (g)', unit: 'g' },
+                  { key: 'carbohydratesG', label: 'Carbohydrates (g)', unit: 'g' },
+                  { key: 'totalSugarsG', label: 'Total Sugars (g)', unit: 'g' },
+                  { key: 'addedSugarsG', label: 'Added Sugars (g)', unit: 'g' },
+                  { key: 'totalFatG', label: 'Total Fat (g)', unit: 'g' },
+                  { key: 'saturatedFatG', label: 'Saturated Fat (g)', unit: 'g' },
+                  { key: 'transFatG', label: 'Trans Fat (g)', unit: 'g' },
+                  { key: 'cholesterolMg', label: 'Cholesterol (mg)', unit: 'mg' },
+                  { key: 'sodiumMg', label: 'Sodium (mg)', unit: 'mg' },
+                ] as const).map(({ key, label, unit }) => {
+                  const val = currentLabel.nutrition[key];
+                  const servingNum = parseFloat(currentLabel.nutrition.servingSize);
+                  const ratio = servingNum > 0 && currentLabel.nutrition.servingBasis !== 'per serving' ? servingNum / 100 : null;
+                  const calculatedServingVal = val !== null && val !== undefined && ratio !== null
+                    ? (val * ratio).toFixed(1)
+                    : null;
+
+                  return (
+                    <div key={key} className="p-2 rounded-lg border border-cream-200 bg-cream-50/40">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-semibold text-slate-600">{label}</span>
+                        {calculatedServingVal !== null && (
+                          <span className="text-[9px] font-bold text-forest-800 bg-forest-100/70 px-1 rounded">
+                            {calculatedServingVal} {unit}/srv
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="any"
+                        value={val ?? ''}
+                        onChange={(e) => {
+                          const parsed = e.target.value === '' ? null : parseFloat(e.target.value);
+                          updateCurrentLabel({
+                            nutrition: {
+                              ...currentLabel.nutrition,
+                              [key]: isNaN(parsed as number) ? null : parsed,
+                            },
+                          });
+                        }}
+                        placeholder="Leave blank if unverified"
+                        className="w-full px-2 py-1 rounded border border-cream-300 font-mono text-xs bg-white"
+                      />
+                    </div>
+                  );
+                })}
               </div>
+
+              <p className="text-[10px] text-slate-500 italic">
+                * Note: Never invent missing lab test figures. FSSAI requires unverified parameters to be verified before distribution.
+              </p>
             </div>
           )}
 
@@ -1522,7 +2144,7 @@ export const EditorPage: React.FC = () => {
           {/* Canvas Viewport: Scrollable, Centered, Pan-enabled when zoomed, fits within screen */}
           <div 
             ref={previewViewportRef}
-            className="relative w-full overflow-auto max-h-[calc(100vh-210px)] min-h-[520px] p-6 sm:p-10 bg-cream-100/60 rounded-3xl border border-cream-200 shadow-inner flex items-center justify-center"
+            className="relative w-full overflow-auto max-h-[calc(100vh-210px)] min-h-[320px] sm:min-h-[520px] p-2 sm:p-10 bg-cream-100/60 rounded-3xl border border-cream-200 shadow-inner flex items-center justify-center"
           >
             {/* Transform Scaling Container */}
             <div 

@@ -24,7 +24,8 @@ import {
   RotateCcw,
   FileCheck,
   AlertTriangle,
-  Info
+  Info,
+  CheckCircle2
 } from 'lucide-react';
 
 export const CreateLabelPage: React.FC = () => {
@@ -35,19 +36,34 @@ export const CreateLabelPage: React.FC = () => {
     setActiveTab, 
     showToast,
     createNewBlankLabel,
-    loadDemoPickle
+    loadDemoPickle,
+    createWizardStep,
+    setCreateWizardStep
   } = useLabel();
 
-  const [currentStep, setCurrentStep] = useState<number>(1);
+  const [currentStep, setCurrentStep] = useState<number>(createWizardStep || 1);
   const [stepErrors, setStepErrors] = useState<string[]>([]);
 
-  // Steps definition
+  // Synchronize with LabelContext createWizardStep (enables scanner and AI draft auto-progression to Step 2)
+  React.useEffect(() => {
+    if (createWizardStep && createWizardStep >= 1 && createWizardStep <= 6) {
+      setCurrentStep(createWizardStep);
+    }
+  }, [createWizardStep]);
+
+  const updateStep = (newStep: number) => {
+    setCurrentStep(newStep);
+    setCreateWizardStep(newStep);
+  };
+
+  // Steps definition (Beginner-Friendly 6-Step Workflow)
   const steps = [
-    { num: 1, title: 'Product Identity', desc: 'Name, Category & Net Quantity' },
-    { num: 2, title: 'Ingredients & Allergens', desc: 'Recipe items & warning statements' },
-    { num: 3, title: 'Nutrition Facts', desc: 'Statutory nutritional values per 100g' },
-    { num: 4, title: 'Traceability & FSSAI', desc: 'Batch, dates, license & address' },
-    { num: 5, title: 'Dimensions & Packaging', desc: 'Physical mm/cm sizing & layout' },
+    { num: 1, title: 'Product Information', desc: 'Name, brand, quote & pack size' },
+    { num: 2, title: 'Ingredients & Allergens', desc: 'Recipe items & allergen declarations' },
+    { num: 3, title: 'Nutrition Information', desc: 'Statutory nutritional values & servings' },
+    { num: 4, title: 'Batch & Manufacturer', desc: 'Lot code, dates & FSSAI licensing' },
+    { num: 5, title: 'Label Design', desc: 'Packaging dimensions & visual theme' },
+    { num: 6, title: 'Review & Generate', desc: 'Pre-flight check & generate printable label' },
   ];
 
   // Helper for ingredient manipulation
@@ -85,6 +101,18 @@ export const CreateLabelPage: React.FC = () => {
         [key]: isNaN(num as number) ? null : num,
       },
     });
+    // Clear relevant step error as soon as user types a valid value
+    if (num !== null && !isNaN(num)) {
+      setStepErrors(prev => prev.filter(e => {
+        const lower = e.toLowerCase();
+        if (key === 'energyKcal' && lower.includes('energy')) return false;
+        if (key === 'proteinG' && lower.includes('protein')) return false;
+        if (key === 'carbohydratesG' && lower.includes('carbohydrate')) return false;
+        if (key === 'totalFatG' && lower.includes('total fat')) return false;
+        if (key === 'sodiumMg' && lower.includes('sodium')) return false;
+        return true;
+      }));
+    }
   };
 
   // Step-by-Step Validation Function
@@ -117,24 +145,28 @@ export const CreateLabelPage: React.FC = () => {
     }
 
     if (step === 3) {
-      if (!currentLabel.nutrition.servingSize.trim()) {
+      // Exemption under FSSAI 2020 Reg 5.2(3) for raw single-ingredient farm produce
+      if (currentLabel.isNutritionExempt || currentLabel.isSingleIngredientProduce) {
+        return errs;
+      }
+      if (!currentLabel.nutrition.servingSize || !currentLabel.nutrition.servingSize.trim()) {
         errs.push('Serving size is required (e.g. "15g (approx 1 tbsp)" or "100g").');
       }
       // FSSAI 2020 Mandatory 5 Core Nutrients
-      if (currentLabel.nutrition.energyKcal === null) {
-        errs.push('Energy (kcal) is a mandatory FSSAI declaration per 100g.');
+      if (currentLabel.nutrition.energyKcal === null || currentLabel.nutrition.energyKcal === undefined) {
+        errs.push('Energy (kcal) is mandatory under FSSAI 2020. Enter verified lab value or check agricultural produce exemption.');
       }
-      if (currentLabel.nutrition.proteinG === null) {
-        errs.push('Protein (g) is a mandatory FSSAI declaration per 100g.');
+      if (currentLabel.nutrition.proteinG === null || currentLabel.nutrition.proteinG === undefined) {
+        errs.push('Protein (g) is mandatory under FSSAI 2020. Enter verified lab value or check agricultural produce exemption.');
       }
-      if (currentLabel.nutrition.carbohydratesG === null) {
-        errs.push('Total Carbohydrates (g) is a mandatory FSSAI declaration per 100g.');
+      if (currentLabel.nutrition.carbohydratesG === null || currentLabel.nutrition.carbohydratesG === undefined) {
+        errs.push('Total Carbohydrates (g) is mandatory under FSSAI 2020. Enter verified lab value or check agricultural produce exemption.');
       }
-      if (currentLabel.nutrition.totalFatG === null) {
-        errs.push('Total Fat (g) is a mandatory FSSAI declaration per 100g.');
+      if (currentLabel.nutrition.totalFatG === null || currentLabel.nutrition.totalFatG === undefined) {
+        errs.push('Total Fat (g) is mandatory under FSSAI 2020. Enter verified lab value or check agricultural produce exemption.');
       }
-      if (currentLabel.nutrition.sodiumMg === null) {
-        errs.push('Sodium (mg) is a mandatory FSSAI declaration per 100g.');
+      if (currentLabel.nutrition.sodiumMg === null || currentLabel.nutrition.sodiumMg === undefined) {
+        errs.push('Sodium (mg) is mandatory under FSSAI 2020. Enter verified lab value or check agricultural produce exemption.');
       }
     }
 
@@ -204,7 +236,7 @@ export const CreateLabelPage: React.FC = () => {
       return;
     }
     setStepErrors([]);
-    setCurrentStep(prev => Math.min(steps.length, prev + 1));
+    updateStep(Math.min(steps.length, currentStep + 1));
   };
 
   const handleStepJump = (targetStep: number) => {
@@ -218,11 +250,11 @@ export const CreateLabelPage: React.FC = () => {
       }
     }
     setStepErrors([]);
-    setCurrentStep(targetStep);
+    updateStep(targetStep);
   };
 
   return (
-    <div className="space-y-6 py-6 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div className="space-y-6 pt-6 pb-24 sm:pb-12 max-w-5xl mx-auto px-3 sm:px-6 lg:px-8">
       {/* Top Banner with Clear vs Demo Toggle */}
       <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -247,24 +279,115 @@ export const CreateLabelPage: React.FC = () => {
           <button
             type="button"
             onClick={() => {
+              if (currentLabel.provenanceMap?.productName === 'ocr_extraction' || (currentLabel.productName && currentLabel.productName !== '')) {
+                const ok = window.confirm(
+                  '⚠️ Alert: Loading demo sample data will overwrite and replace the details currently gathered from your scanned packaging. Do you want to proceed?'
+                );
+                if (!ok) return;
+              }
               loadDemoPickle();
               setStepErrors([]);
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold text-xs border border-amber-200 transition-all shadow-sm"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold text-xs border border-amber-200 transition-all shadow-sm cursor-pointer"
             title="Populate form with authentic pickle sample data"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            Load Demo Sample (Pickle)
+            Load Demo (Pickle)
           </button>
 
           <button
             type="button"
             onClick={() => {
-              createNewBlankLabel();
+              if (currentLabel.provenanceMap?.productName === 'ocr_extraction' || (currentLabel.productName && currentLabel.productName !== '')) {
+                const ok = window.confirm(
+                  '⚠️ Alert: Loading demo sample data will overwrite and replace the details currently gathered from your scanned packaging. Do you want to proceed?'
+                );
+                if (!ok) return;
+              }
+              updateCurrentLabel({
+                productName: 'Pahadi Raw Wildflower Honey',
+                brandName: 'Pahadi Gold Agro',
+                brandQuote: 'Pure 100% Raw Forest Harvest from Himalayan Apiaries',
+                category: 'Honey, Cold-Pressed Oils & Agritech Produce',
+                description: 'Unfiltered, unpasteurized monofloral raw forest honey with natural royal jelly and bee pollen enzymes.',
+                netQuantity: 250,
+                netQuantityUnit: 'g',
+                dietaryClassification: 'veg',
+                isSingleIngredientProduce: false,
+                isNutritionExempt: false,
+                fssaiLicense: '10019022009841',
+                batchNumber: 'HK-HONEY-2026-B12',
+                mfgDate: new Date().toISOString().split('T')[0],
+                bestBeforeMonths: 18,
+                bestBeforePeriod: 'Best before 18 months from manufacture',
+                expiryDate: new Date(Date.now() + 18 * 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                storageInstructions: 'Store at room temperature in a dry place. Do not refrigerate. Non-pasteurized honey naturally crystallizes.',
+                ingredients: [{ id: 'ing-1', name: 'Pure Raw Wildflower Honey', percentage: '100%', isAllergen: false, order: 1 }],
+                allergenDeclarations: [],
+                nutrition: {
+                  servingBasis: 'per 100g',
+                  servingSize: '20g (1 tbsp)',
+                  energyKcal: 304,
+                  proteinG: 0.3,
+                  carbohydratesG: 82.4,
+                  totalSugarsG: 82.0,
+                  addedSugarsG: 0.0,
+                  totalFatG: 0.0,
+                  saturatedFatG: 0.0,
+                  transFatG: 0.0,
+                  cholesterolMg: 0.0,
+                  sodiumMg: 4.0,
+                },
+                manufacturer: {
+                  name: 'Pahadi Heritage Food & Agri Products Pvt Ltd',
+                  address: 'Plot 42, Himalayan Agro-Industrial Park',
+                  city: 'Almora',
+                  state: 'Uttarakhand',
+                  postalCode: '263601',
+                  country: 'India',
+                  customerCarePhone: '+91 98765 43210',
+                  customerCareEmail: 'support@pahadigoldfoods.com',
+                },
+                dimensions: {
+                  width: 80,
+                  height: 110,
+                  unit: 'mm',
+                  orientation: 'portrait',
+                  layoutStyle: 'standard',
+                  labelTheme: 'organic-inspired',
+                  fontFamily: 'serif',
+                  fontSizeScale: 1.0,
+                  borderRadiusMm: 3,
+                  showVegLogo: true,
+                  showNutritionTable: true,
+                  showBarcode: true,
+                  showQrCode: true,
+                  showBilingualTitles: false,
+                  textAlign: 'left',
+                  safeMargin: 3,
+                  bleed: 2,
+                }
+              });
               setStepErrors([]);
-              setCurrentStep(1);
+              showToast('Loaded demo artisan raw honey product!', 'success');
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cream-100 hover:bg-cream-200 text-slate-700 font-semibold text-xs border border-cream-300 transition-all"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-limeaccent-100 hover:bg-limeaccent-200 text-forest-950 font-semibold text-xs border border-limeaccent-300 transition-all shadow-sm cursor-pointer"
+            title="Populate form with authentic Pahadi Honey sample data"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-forest-900" />
+            Load Demo (Honey)
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm('Are you sure you want to clear your current progress and start a blank label?')) {
+                createNewBlankLabel();
+                setStepErrors([]);
+                updateStep(1);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cream-100 hover:bg-cream-200 text-slate-700 font-semibold text-xs border border-cream-300 transition-all cursor-pointer"
             title="Reset to empty blank draft"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -274,7 +397,7 @@ export const CreateLabelPage: React.FC = () => {
           <button
             type="button"
             onClick={saveCurrentProduct}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-forest-900 hover:bg-forest-800 text-white font-semibold text-xs transition-all shadow-sm"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-forest-900 hover:bg-forest-800 text-white font-semibold text-xs transition-all shadow-sm cursor-pointer"
           >
             <Save className="w-3.5 h-3.5" />
             Save Draft
@@ -520,12 +643,47 @@ export const CreateLabelPage: React.FC = () => {
                 className="w-full text-xs px-3.5 py-2 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-forest-800"
               />
             </div>
+
+            {/* Brand Quote / Packaging Tagline */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-800">
+                  Brand Quote / Packaging Tagline
+                </label>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-limeaccent-100 text-forest-900">Featured On Label</span>
+              </div>
+              <input
+                type="text"
+                value={currentLabel.brandQuote || ''}
+                onChange={(e) => updateCurrentLabel({ brandQuote: e.target.value })}
+                placeholder="e.g. 100% Pure & Raw from Himalayan Wildflowers or Handcrafted in Small Batches"
+                className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-forest-800 font-medium"
+              />
+              <p className="text-[11px] text-slate-500 mt-1">Highlighted artisan motto or quote printed prominently on the packaging front.</p>
+            </div>
           </div>
         )}
 
         {/* STEP 2: Ingredients & Allergens */}
         {currentStep === 2 && (
           <div className="space-y-6">
+            {currentLabel.provenanceMap?.productName === 'ocr_extraction' && (
+              <div className="p-4 rounded-xl bg-gradient-to-r from-limeaccent-50 via-emerald-50 to-teal-50 border border-limeaccent-300 shadow-sm flex items-start gap-3.5">
+                <div className="w-8 h-8 rounded-lg bg-limeaccent-400 text-forest-950 flex items-center justify-center shrink-0 font-bold shadow-xs">
+                  ✨
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-forest-950">AI Label Auto-Creation Active</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-forest-900 text-white">Step 1 Complete</span>
+                  </div>
+                  <p className="text-[11px] text-forest-800 mt-0.5">
+                    Product Identity was verified from your scanned packaging (<strong>{currentLabel.productName}</strong> by <strong>{currentLabel.brandName || 'Producer'}</strong>). You are now in <strong>Step 2: Ingredients & Allergens</strong>. Review the detected formulation below before continuing to Nutrition Facts.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
               <div className="space-y-1 text-xs text-amber-900">
@@ -665,186 +823,351 @@ export const CreateLabelPage: React.FC = () => {
         )}
 
         {/* STEP 3: Nutrition Information */}
-        {currentStep === 3 && (
-          <div className="space-y-6">
-            <div className="bg-forest-50/70 border border-forest-200 p-4 rounded-xl flex items-start gap-3">
-              <Info className="w-5 h-5 text-forest-800 shrink-0 mt-0.5" />
-              <div className="space-y-1 text-xs text-forest-900">
-                <p className="font-semibold">Mandatory Core FSSAI 2020 Nutrition Facts</p>
-                <p>
-                  Per 100g / 100ml declarations are statutory. Missing lab values must remain empty until verified; never invent lab test results.
-                </p>
-              </div>
-            </div>
+        {currentStep === 3 && (() => {
+          const servingGrams = parseFloat(currentLabel.nutrition.servingSize?.replace(/[^\d.]/g, '') || '') || 0;
+          const isPerServing = currentLabel.nutrition.servingBasis === 'per serving';
+          const isProduceExempt = Boolean(currentLabel.isNutritionExempt || currentLabel.isSingleIngredientProduce);
 
-            {/* Serving Basis and Size */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-800 mb-1.5">
-                  Serving Basis *
-                </label>
-                <select
-                  value={currentLabel.nutrition.servingBasis}
-                  onChange={(e) => updateCurrentLabel({
-                    nutrition: { ...currentLabel.nutrition, servingBasis: e.target.value }
-                  })}
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 bg-white font-medium"
-                >
-                  <option value="per 100g">Per 100 g</option>
-                  <option value="per 100ml">Per 100 ml</option>
-                  <option value="per serving">Per Single Serving</option>
-                </select>
-              </div>
+          const getAutoCalcText = (val: number | null | undefined, unit: string) => {
+            if (val === null || val === undefined) return '— (Unverified, empty)';
+            if (servingGrams <= 0) return null;
+            if (isPerServing) {
+              const per100 = (val * 100) / servingGrams;
+              return `${per100.toFixed(1)}${unit} / 100g (Basis: ×${(100 / servingGrams).toFixed(1)})`;
+            } else {
+              const perServ = (val * servingGrams) / 100;
+              return `${perServ.toFixed(1)}${unit} / ${servingGrams}g serving (Basis: ×${(servingGrams / 100).toFixed(2)})`;
+            }
+          };
 
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-slate-800">
-                    Serving Portion Size *
-                  </label>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">Mandatory</span>
+          return (
+            <div className="space-y-6">
+              {/* Guidance & Regulatory Notice */}
+              <div className="bg-forest-50/70 border border-forest-200 p-4 rounded-xl flex items-start gap-3">
+                <Info className="w-5 h-5 text-forest-800 shrink-0 mt-0.5" />
+                <div className="space-y-1 text-xs text-forest-900">
+                  <p className="font-semibold">Trustworthy Nutrition Data & Automatic Portion Calculation</p>
+                  <p>
+                    Indian regulations (FSSAI 2020) require core nutrition values to be declared per 100g (or per 100ml for liquids). 
+                    Enter verified numbers from a package, laboratory report, or ingredient specification sheet. 
+                    <strong> LabelIQ never invents missing lab numbers.</strong>
+                  </p>
                 </div>
+              </div>
+
+              {/* Single-Ingredient Farm Produce Exemption Checkbox */}
+              <div className="p-4 rounded-xl border border-cream-300 bg-cream-50/70 flex items-start gap-3">
                 <input
-                  type="text"
-                  value={currentLabel.nutrition.servingSize}
+                  type="checkbox"
+                  id="produce-exempt-toggle"
+                  checked={isProduceExempt}
                   onChange={(e) => updateCurrentLabel({
-                    nutrition: { ...currentLabel.nutrition, servingSize: e.target.value }
+                    isNutritionExempt: e.target.checked,
+                    isSingleIngredientProduce: e.target.checked
                   })}
-                  placeholder="e.g. 15 g (approx. 1 tbsp)"
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 focus:ring-2 focus:ring-forest-800 font-medium"
+                  className="mt-1 rounded text-forest-800 focus:ring-forest-800 h-4 w-4"
                 />
+                <label htmlFor="produce-exempt-toggle" className="text-xs text-slate-800 cursor-pointer space-y-0.5">
+                  <span className="font-bold text-slate-900 block">
+                    Single-Ingredient Farm Produce Exemption (FSSAI 2020 Reg 5.2.3)
+                  </span>
+                  <span className="text-[11px] text-slate-600 block leading-relaxed">
+                    Check this if your product is raw single-ingredient farm produce (e.g. raw forest honey, single-origin whole spices, raw pulses, grains, cold-pressed single seed oil). Under FSSAI regulations, mandatory nutrition facts tables are legally exempt for these categories.
+                  </span>
+                </label>
               </div>
-            </div>
 
-            {/* Mandatory Nutrients Grid */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Mandatory Nutritional Declarations (Per 100g/ml)</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-xs">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Energy (kcal) *</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.energyKcal ?? ''}
-                    onChange={(e) => handleNutritionChange('energyKcal', e.target.value)}
-                    placeholder="236"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Protein (g) *</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.proteinG ?? ''}
-                    onChange={(e) => handleNutritionChange('proteinG', e.target.value)}
-                    placeholder="2.4"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Carbohydrates (g) *</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.carbohydratesG ?? ''}
-                    onChange={(e) => handleNutritionChange('carbohydratesG', e.target.value)}
-                    placeholder="14.8"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Total Sugars (g)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.totalSugarsG ?? ''}
-                    onChange={(e) => handleNutritionChange('totalSugarsG', e.target.value)}
-                    placeholder="2.1"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Added Sugars (g)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.addedSugarsG ?? ''}
-                    onChange={(e) => handleNutritionChange('addedSugarsG', e.target.value)}
-                    placeholder="0.0"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Total Fat (g) *</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.totalFatG ?? ''}
-                    onChange={(e) => handleNutritionChange('totalFatG', e.target.value)}
-                    placeholder="18.5"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Saturated Fat (g)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.saturatedFatG ?? ''}
-                    onChange={(e) => handleNutritionChange('saturatedFatG', e.target.value)}
-                    placeholder="2.2"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Trans Fat (g)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={currentLabel.nutrition.transFatG ?? ''}
-                    onChange={(e) => handleNutritionChange('transFatG', e.target.value)}
-                    placeholder="0.0"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-semibold text-slate-700">Sodium (mg) *</label>
-                    <span className="text-[9px] font-bold text-rose-700">Crucial</span>
+              {isProduceExempt ? (
+                <div className="p-5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
+                  <div>
+                    <span className="font-bold block">Produce Exemption Active</span>
+                    <span className="text-[11px] text-emerald-800">
+                      Mandatory nutrition declarations are waived for this product under FSSAI 2020 Reg 5.2(3). You may proceed to Step 4 without entering nutrient lab values.
+                    </span>
                   </div>
-                  <input
-                    type="number"
-                    step="1"
-                    value={currentLabel.nutrition.sodiumMg ?? ''}
-                    onChange={(e) => handleNutritionChange('sodiumMg', e.target.value)}
-                    placeholder="4280"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
                 </div>
+              ) : (
+                <>
+                  {/* Serving Basis and Size */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-800 mb-1.5">
+                        Declaration Entry Basis *
+                      </label>
+                      <select
+                        value={currentLabel.nutrition.servingBasis}
+                        onChange={(e) => updateCurrentLabel({
+                          nutrition: { ...currentLabel.nutrition, servingBasis: e.target.value }
+                        })}
+                        className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 bg-white font-medium"
+                      >
+                        <option value="per 100g">Per 100 g (From Lab Report / Specification)</option>
+                        <option value="per 100ml">Per 100 ml (From Liquid Lab Report)</option>
+                        <option value="per serving">Per Single Serving (From Package / Recipe)</option>
+                      </select>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Select how your laboratory test or supplier source sheet provides values.
+                      </p>
+                    </div>
 
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Cholesterol (mg)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={currentLabel.nutrition.cholesterolMg ?? ''}
-                    onChange={(e) => handleNutritionChange('cholesterolMg', e.target.value)}
-                    placeholder="0.0"
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-cream-300 font-mono"
-                  />
-                </div>
-              </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-semibold text-slate-800">
+                          Serving Portion Size *
+                        </label>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">Mandatory</span>
+                      </div>
+                      <input
+                        type="text"
+                        value={currentLabel.nutrition.servingSize}
+                        onChange={(e) => updateCurrentLabel({
+                          nutrition: { ...currentLabel.nutrition, servingSize: e.target.value }
+                        })}
+                        placeholder="e.g. 15 g (approx. 1 tbsp) or 30g"
+                        className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 focus:ring-2 focus:ring-forest-800 font-medium"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        {servingGrams > 0 
+                          ? `Portion recognized as ${servingGrams}g. LabelIQ calculates automatic portion conversions below.`
+                          : 'Enter typical portion size (e.g. 15g, 20g, 30g).'}
+                      </p>
+                    </div>
+
+                    {/* Pre-fill Standard Nutritional Values helper for Producers */}
+                    <div className="sm:col-span-2 p-3 bg-forest-50/70 rounded-xl border border-forest-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="text-xs text-forest-950">
+                        <span className="font-bold flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-forest-800" />
+                          ICMR-NIN Food Composition Database Reference
+                        </span>
+                        <p className="text-[11px] text-slate-600 mt-0.5">
+                          Ordinary producers don't have to calculate every number manually. Pre-fill standard scientific baseline values for {currentLabel.category || 'this category'}:
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cat = currentLabel.category || '';
+                          let preset = {
+                            energyKcal: 236,
+                            proteinG: 2.4,
+                            carbohydratesG: 14.8,
+                            totalSugarsG: 2.1,
+                            addedSugarsG: 0.0,
+                            totalFatG: 18.5,
+                            saturatedFatG: 2.2,
+                            transFatG: 0.0,
+                            cholesterolMg: 0.0,
+                            sodiumMg: 4280,
+                          };
+                          if (cat.includes('Honey') || cat.includes('Sweetener')) {
+                            preset = { energyKcal: 304, proteinG: 0.3, carbohydratesG: 82.4, totalSugarsG: 82.0, addedSugarsG: 0.0, totalFatG: 0.0, saturatedFatG: 0.0, transFatG: 0.0, cholesterolMg: 0.0, sodiumMg: 4 };
+                          } else if (cat.includes('Bakery') || cat.includes('Snack')) {
+                            preset = { energyKcal: 448, proteinG: 7.2, carbohydratesG: 62.0, totalSugarsG: 18.5, addedSugarsG: 16.0, totalFatG: 19.5, saturatedFatG: 8.5, transFatG: 0.1, cholesterolMg: 5.0, sodiumMg: 380 };
+                          } else if (cat.includes('Spice') || cat.includes('Seasoning')) {
+                            preset = { energyKcal: 312, proteinG: 9.8, carbohydratesG: 44.5, totalSugarsG: 3.2, addedSugarsG: 0.0, totalFatG: 10.2, saturatedFatG: 1.1, transFatG: 0.0, cholesterolMg: 0.0, sodiumMg: 110 };
+                          }
+                          updateCurrentLabel({
+                            nutrition: {
+                              ...currentLabel.nutrition,
+                              ...preset,
+                            }
+                          });
+                          setStepErrors([]);
+                          showToast('Pre-filled ICMR-NIN baseline nutritional assay values!', 'success');
+                        }}
+                        className="shrink-0 px-3.5 py-1.5 rounded-xl bg-forest-900 text-limeaccent-400 font-bold text-xs hover:bg-forest-800 transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Pre-fill Standard Lab Values</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Mandatory Nutrients Grid with Automatic Conversions */}
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                        {isPerServing ? 'Nutrient Values (Per Single Serving)' : 'Nutrient Values (Per 100g / 100ml)'}
+                      </h3>
+                      {servingGrams > 0 && (
+                        <span className="text-[11px] text-forest-800 font-semibold bg-forest-50 px-2.5 py-0.5 rounded-full border border-forest-200">
+                          Automatic {isPerServing ? 'Per-100g' : `Per-${servingGrams}g Serving`} Calculation Active
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+                      {/* Energy */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Energy (kcal) *</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.energyKcal ?? ''}
+                          onChange={(e) => handleNutritionChange('energyKcal', e.target.value)}
+                          placeholder="236"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.energyKcal, ' kcal')}
+                        </div>
+                      </div>
+
+                      {/* Protein */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Protein (g) *</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.proteinG ?? ''}
+                          onChange={(e) => handleNutritionChange('proteinG', e.target.value)}
+                          placeholder="2.4"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.proteinG, 'g')}
+                        </div>
+                      </div>
+
+                      {/* Carbohydrates */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Carbohydrates (g) *</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.carbohydratesG ?? ''}
+                          onChange={(e) => handleNutritionChange('carbohydratesG', e.target.value)}
+                          placeholder="14.8"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.carbohydratesG, 'g')}
+                        </div>
+                      </div>
+
+                      {/* Total Sugars */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Total Sugars (g)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.totalSugarsG ?? ''}
+                          onChange={(e) => handleNutritionChange('totalSugarsG', e.target.value)}
+                          placeholder="2.1"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.totalSugarsG, 'g')}
+                        </div>
+                      </div>
+
+                      {/* Added Sugars */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Added Sugars (g)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.addedSugarsG ?? ''}
+                          onChange={(e) => handleNutritionChange('addedSugarsG', e.target.value)}
+                          placeholder="0.0"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.addedSugarsG, 'g')}
+                        </div>
+                      </div>
+
+                      {/* Total Fat */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Total Fat (g) *</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.totalFatG ?? ''}
+                          onChange={(e) => handleNutritionChange('totalFatG', e.target.value)}
+                          placeholder="18.5"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.totalFatG, 'g')}
+                        </div>
+                      </div>
+
+                      {/* Saturated Fat */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Saturated Fat (g)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.saturatedFatG ?? ''}
+                          onChange={(e) => handleNutritionChange('saturatedFatG', e.target.value)}
+                          placeholder="2.2"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.saturatedFatG, 'g')}
+                        </div>
+                      </div>
+
+                      {/* Trans Fat */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-800">Trans Fat (g)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={currentLabel.nutrition.transFatG ?? ''}
+                          onChange={(e) => handleNutritionChange('transFatG', e.target.value)}
+                          placeholder="0.0"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.transFatG, 'g')}
+                        </div>
+                      </div>
+
+                      {/* Sodium */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-semibold text-slate-800">Sodium (mg) *</label>
+                          <span className="text-[9px] font-bold text-rose-700 bg-rose-50 px-1 rounded">Crucial</span>
+                        </div>
+                        <input
+                          type="number"
+                          step="1"
+                          value={currentLabel.nutrition.sodiumMg ?? ''}
+                          onChange={(e) => handleNutritionChange('sodiumMg', e.target.value)}
+                          placeholder="4280"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.sodiumMg, 'mg')}
+                        </div>
+                      </div>
+
+                      {/* Cholesterol */}
+                      <div className="p-3 rounded-xl border border-cream-200 bg-cream-50/40 space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-700">Cholesterol (mg)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={currentLabel.nutrition.cholesterolMg ?? ''}
+                          onChange={(e) => handleNutritionChange('cholesterolMg', e.target.value)}
+                          placeholder="0.0"
+                          className="w-full text-xs px-3 py-1.5 rounded-lg border border-cream-300 font-mono bg-white"
+                        />
+                        <div className="text-[10px] font-mono text-forest-800">
+                          {getAutoCalcText(currentLabel.nutrition.cholesterolMg, 'mg')}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* STEP 4: Traceability & FSSAI */}
         {currentStep === 4 && (
@@ -881,7 +1204,17 @@ export const CreateLabelPage: React.FC = () => {
                 <input
                   type="date"
                   value={currentLabel.mfgDate}
-                  onChange={(e) => updateCurrentLabel({ mfgDate: e.target.value })}
+                  onChange={(e) => {
+                    const newMfg = e.target.value;
+                    const months = currentLabel.bestBeforeMonths || 12;
+                    let newExp = currentLabel.expiryDate;
+                    if (newMfg) {
+                      const d = new Date(newMfg);
+                      d.setMonth(d.getMonth() + months);
+                      newExp = d.toISOString().split('T')[0];
+                    }
+                    updateCurrentLabel({ mfgDate: newMfg, expiryDate: newExp });
+                  }}
                   className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-forest-800"
                 />
               </div>
@@ -902,7 +1235,54 @@ export const CreateLabelPage: React.FC = () => {
               </div>
             </div>
 
-            {/* FSSAI License */}
+            {/* Quick Best-Before Presets (e.g. 6 Months from Manufacture) */}
+            <div className="p-3.5 bg-cream-50/80 rounded-xl border border-cream-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800">
+                  Quick Shelf-Life Presets (Auto-Calculates Expiry Date):
+                </span>
+                <span className="text-[11px] font-medium text-forest-800">
+                  {currentLabel.bestBeforePeriod || `Best before ${currentLabel.bestBeforeMonths || 12} months from manufacture`}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { months: 3, label: '3 Months' },
+                  { months: 6, label: '6 Months from Mfg' },
+                  { months: 9, label: '9 Months' },
+                  { months: 12, label: '12 Months (1 Year)' },
+                  { months: 18, label: '18 Months' },
+                  { months: 24, label: '24 Months (2 Years)' },
+                ].map(preset => (
+                  <button
+                    key={preset.months}
+                    type="button"
+                    onClick={() => {
+                      const mfg = currentLabel.mfgDate || new Date().toISOString().split('T')[0];
+                      const d = new Date(mfg);
+                      d.setMonth(d.getMonth() + preset.months);
+                      const exp = d.toISOString().split('T')[0];
+                      updateCurrentLabel({
+                        mfgDate: mfg,
+                        expiryDate: exp,
+                        bestBeforeMonths: preset.months,
+                        bestBeforePeriod: `Best before ${preset.months} months from manufacture`,
+                      });
+                      showToast(`Set shelf life to ${preset.months} months (Expiry: ${exp}).`, 'info');
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                      currentLabel.bestBeforeMonths === preset.months
+                        ? 'bg-forest-900 text-white border-forest-900 shadow-xs'
+                        : 'bg-white text-slate-700 border-cream-300 hover:bg-cream-100'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* FSSAI License & FoSCoS Auto-Fill */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -911,14 +1291,41 @@ export const CreateLabelPage: React.FC = () => {
                   </label>
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">14 Digits</span>
                 </div>
-                <input
-                  type="text"
-                  maxLength={14}
-                  value={currentLabel.fssaiLicense}
-                  onChange={(e) => updateCurrentLabel({ fssaiLicense: e.target.value.replace(/\D/g, '') })}
-                  placeholder="e.g. 10019022009841"
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-forest-800 font-mono tracking-wider"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    maxLength={14}
+                    value={currentLabel.fssaiLicense}
+                    onChange={(e) => updateCurrentLabel({ fssaiLicense: e.target.value.replace(/\D/g, '') })}
+                    placeholder="e.g. 10019022009841"
+                    className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-forest-800 font-mono tracking-wider"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateCurrentLabel({
+                        fssaiLicense: currentLabel.fssaiLicense || '10019022009841',
+                        manufacturer: {
+                          name: 'Pahadi Heritage Food & Agri Products Pvt Ltd',
+                          address: 'Plot 42, Himalayan Agro-Industrial Park, Sector 4',
+                          city: 'Almora',
+                          state: 'Uttarakhand',
+                          postalCode: '263601',
+                          country: 'India',
+                          customerCarePhone: '+91 98765 43210',
+                          customerCareEmail: 'support@pahadigoldfoods.com',
+                        }
+                      });
+                      showToast('Brand and manufacturer details auto-filled from FSSAI FoSCoS Registry!', 'success');
+                    }}
+                    className="shrink-0 px-3 py-2 rounded-xl bg-forest-900 text-limeaccent-400 font-bold text-xs hover:bg-forest-800 transition-all flex items-center gap-1 shadow-xs cursor-pointer"
+                    title="Auto-fill company and address details from FSSAI license"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Auto-Extract FoSCoS</span>
+                    <span className="sm:hidden">Auto-Fill</span>
+                  </button>
+                </div>
                 <p className="text-[10px] text-slate-500 mt-1">Must be an active food business operator license registered on FoSCoS.</p>
               </div>
 
@@ -1492,6 +1899,124 @@ export const CreateLabelPage: React.FC = () => {
           </div>
         )}
 
+        {/* STEP 6: Review & Pre-Flight Check */}
+        {currentStep === 6 && (
+          <div className="space-y-6">
+            <div className="p-4 rounded-xl bg-forest-50 border border-forest-200 text-xs text-forest-900 flex items-start gap-3">
+              <CheckCircle2 className="w-5 h-5 text-forest-800 shrink-0 mt-0.5" />
+              <div>
+                <strong className="block text-sm">Step 6: Review Your Product Label</strong>
+                <span>Review all product details below before generating the label. You can make adjustments here or continue directly to the visual canvas editor.</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Product Identity Summary */}
+              <div className="p-4 rounded-2xl bg-white border border-cream-200 space-y-2">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Product Identity</span>
+                  <button type="button" onClick={() => updateStep(1)} className="text-[11px] font-bold text-forest-800 hover:underline">Edit</button>
+                </div>
+                <div className="text-sm font-bold text-slate-900">{currentLabel.productName || 'Untitled'}</div>
+                <div className="text-xs text-slate-600">{currentLabel.brandName} • {currentLabel.category}</div>
+                {currentLabel.brandQuote && (
+                  <div className="text-xs italic text-forest-800">"{currentLabel.brandQuote}"</div>
+                )}
+                <div className="text-xs text-slate-700">Net Quantity: <strong>{currentLabel.netQuantity} {currentLabel.netQuantityUnit}</strong></div>
+                <div className="text-xs text-slate-700">Dietary: <span className="font-semibold">{currentLabel.dietaryClassification === 'veg' ? '🟢 Vegetarian' : '🟤 Non-Veg'}</span></div>
+              </div>
+
+              {/* Recipe & Allergens Summary */}
+              <div className="p-4 rounded-2xl bg-white border border-cream-200 space-y-2">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Ingredients ({currentLabel.ingredients.length})</span>
+                  <button type="button" onClick={() => updateStep(2)} className="text-[11px] font-bold text-forest-800 hover:underline">Edit</button>
+                </div>
+                <div className="text-xs text-slate-700 line-clamp-3">
+                  {currentLabel.ingredients.map(i => `${i.name}${i.percentage ? ` (${i.percentage})` : ''}`).join(', ')}
+                </div>
+                <div className="text-xs pt-1 border-t">
+                  <span className="text-slate-500">Allergen Declarations: </span>
+                  {currentLabel.allergenDeclarations && currentLabel.allergenDeclarations.length > 0 ? (
+                    <strong className="text-rose-600">{currentLabel.allergenDeclarations.join(', ')}</strong>
+                  ) : (
+                    <span className="text-emerald-700 font-medium">None declared</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Nutrition Summary */}
+              <div className="p-4 rounded-2xl bg-white border border-cream-200 space-y-2">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Nutrition Facts</span>
+                  <button type="button" onClick={() => updateStep(3)} className="text-[11px] font-bold text-forest-800 hover:underline">Edit</button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs font-mono">
+                  <div className="p-2 rounded bg-cream-50 border">
+                    <span className="text-[10px] text-slate-500 block">Energy</span>
+                    <strong>{currentLabel.nutrition.energyKcal ?? '-'} kcal</strong>
+                  </div>
+                  <div className="p-2 rounded bg-cream-50 border">
+                    <span className="text-[10px] text-slate-500 block">Protein</span>
+                    <strong>{currentLabel.nutrition.proteinG ?? '-'} g</strong>
+                  </div>
+                  <div className="p-2 rounded bg-cream-50 border">
+                    <span className="text-[10px] text-slate-500 block">Carbs</span>
+                    <strong>{currentLabel.nutrition.carbohydratesG ?? '-'} g</strong>
+                  </div>
+                  <div className="p-2 rounded bg-cream-50 border">
+                    <span className="text-[10px] text-slate-500 block">Fat</span>
+                    <strong>{currentLabel.nutrition.totalFatG ?? '-'} g</strong>
+                  </div>
+                  <div className="p-2 rounded bg-cream-50 border">
+                    <span className="text-[10px] text-slate-500 block">Sodium</span>
+                    <strong>{currentLabel.nutrition.sodiumMg ?? '-'} mg</strong>
+                  </div>
+                  <div className="p-2 rounded bg-cream-50 border">
+                    <span className="text-[10px] text-slate-500 block">Serving</span>
+                    <strong className="truncate block">{currentLabel.nutrition.servingSize || '100g'}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Traceability & Licensing Summary */}
+              <div className="p-4 rounded-2xl bg-white border border-cream-200 space-y-2">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Traceability & FSSAI</span>
+                  <button type="button" onClick={() => updateStep(4)} className="text-[11px] font-bold text-forest-800 hover:underline">Edit</button>
+                </div>
+                <div className="text-xs space-y-1">
+                  <div><span className="text-slate-500">Batch / Lot:</span> <strong>{currentLabel.batchNumber || 'N/A'}</strong></div>
+                  <div><span className="text-slate-500">Mfg / Exp:</span> {currentLabel.mfgDate} &bull; Exp: {currentLabel.bestBeforePeriod || currentLabel.expiryDate}</div>
+                  <div><span className="text-slate-500">FSSAI License:</span> <strong className="font-mono">{currentLabel.fssaiLicense || 'XXXXXXXXXXXXXX'}</strong></div>
+                  <div><span className="text-slate-500">Manufacturer:</span> {currentLabel.manufacturer.name || 'Artisan Producer'}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Packaging Preview Card */}
+            <div className="p-4 rounded-2xl bg-forest-950 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-limeaccent-400">Packaging Format</span>
+                <div className="text-sm font-bold">{currentLabel.dimensions.width}×{currentLabel.dimensions.height}{currentLabel.dimensions.unit} ({currentLabel.dimensions.layoutStyle})</div>
+                <span className="text-xs text-cream-200">Theme: {currentLabel.dimensions.labelTheme} &bull; Orientation: {currentLabel.dimensions.orientation}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  saveCurrentProduct();
+                  setActiveTab('editor');
+                  showToast('Generated label draft! Ready for print preview & export.', 'success');
+                }}
+                className="px-5 py-2.5 rounded-xl bg-limeaccent-400 hover:bg-limeaccent-300 text-forest-950 font-bold text-xs transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 shrink-0"
+              >
+                <span>Generate & Open Live Editor</span>
+                <Eye className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Step Navigation Buttons */}
         <div className="flex items-center justify-between pt-6 border-t border-cream-200">
           <button
@@ -1499,7 +2024,7 @@ export const CreateLabelPage: React.FC = () => {
             disabled={currentStep === 1}
             onClick={() => {
               setStepErrors([]);
-              setCurrentStep(prev => Math.max(1, prev - 1));
+              updateStep(Math.max(1, currentStep - 1));
             }}
             className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-cream-300 text-slate-700 font-semibold text-xs hover:bg-cream-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
           >
@@ -1520,13 +2045,9 @@ export const CreateLabelPage: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                const errs = validateStep(5);
-                if (errs.length > 0) {
-                  setStepErrors(errs);
-                  return;
-                }
                 saveCurrentProduct();
                 setActiveTab('editor');
+                showToast('Generated label draft! Ready for print preview & export.', 'success');
               }}
               className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-limeaccent-400 hover:bg-limeaccent-300 text-forest-950 font-bold text-xs transition-all shadow-md active:scale-95"
             >

@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 
 export const ScannerPage: React.FC = () => {
-  const { updateCurrentLabel, setActiveTab, showToast, settings, aiConnectionStatus } = useLabel();
+  const { updateCurrentLabel, setActiveTab, showToast, settings, aiConnectionStatus, setCreateWizardStep } = useLabel();
 
   // File & Preview state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -50,6 +50,12 @@ export const ScannerPage: React.FC = () => {
   const [newIngredientName, setNewIngredientName] = useState<string>('');
   const [newIngredientPct, setNewIngredientPct] = useState<string>('');
   const [newIngredientAllergen, setNewIngredientAllergen] = useState<boolean>(false);
+  const [showAllIngredients, setShowAllIngredients] = useState<boolean>(false);
+  const [selectedPanelIndex, setSelectedPanelIndex] = useState<number>(0);
+
+  // Auto-Progression & Auto-Create State
+  const [autoCreatePrompt, setAutoCreatePrompt] = useState<string>('');
+  const [scanProgressStage, setScanProgressStage] = useState<'idle' | 'optimizing' | 'scanning_ai' | 'formulating_ai'>('idle');
 
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
@@ -267,17 +273,78 @@ export const ScannerPage: React.FC = () => {
     img.src = previewUrl;
   };
 
-  // Execute scan via backend API
+  // Canvas-based image optimizer: Downscale photos > 1400px to drastically reduce network time and OCR inference latency
+  const optimizeImageForScan = async (file: File): Promise<File> => {
+    if (file.type === 'application/pdf' || file.size < 350 * 1024) {
+      return file;
+    }
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const maxDim = 1400;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(file);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              resolve(file);
+              return;
+            }
+            const optimized = new File([blob], file.name.replace(/\.[^/.]+$/, '') + '.jpg', {
+              type: 'image/jpeg',
+              lastModified: Date.now(),
+            });
+            resolve(optimized);
+          },
+          'image/jpeg',
+          0.88
+        );
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(file);
+      };
+      img.src = url;
+    });
+  };
+
+  // Execute scan via backend API — retains user on scanner with manual progression options
   const executeScan = async (fileToScan: File | null, isSampleDemo: boolean = false) => {
     setIsScanning(true);
+    setScanProgressStage('optimizing');
     setHasNoText(false);
     setNoTextMessage('');
     showToast('Executing packaging OCR & document vision...', 'info');
 
     try {
+      let finalFile = fileToScan;
+      if (fileToScan && !isSampleDemo) {
+        finalFile = await optimizeImageForScan(fileToScan);
+      }
+
+      setScanProgressStage('scanning_ai');
       const formData = new FormData();
-      if (fileToScan) {
-        formData.append('labelFile', fileToScan);
+      if (finalFile) {
+        formData.append('labelFile', finalFile);
       } else {
         const dummyBlob = new Blob(['Demo Sample Food Packaging Proof Document'], { type: 'image/jpeg' });
         formData.append('labelFile', dummyBlob, 'demo_sample_packaging_proof.jpg');
@@ -293,6 +360,7 @@ export const ScannerPage: React.FC = () => {
         method: 'POST',
         headers,
         body: formData,
+        signal: AbortSignal.timeout(35000), // 35s timeout
       });
 
       if (!response.ok) {
@@ -303,6 +371,7 @@ export const ScannerPage: React.FC = () => {
         throw new Error(errorJson.error || `Server returned status ${response.status}`);
       }
 
+      setScanProgressStage('formulating_ai');
       const data = await response.json();
 
       if (data.hasReadableText === false) {
@@ -320,17 +389,38 @@ export const ScannerPage: React.FC = () => {
       setRawTextSnippet(data.rawExtractedText || data.extractedData?.rawExtractedText || '');
       setExtractionMethod(data.extractionMethod || 'Dual-Engine OCR');
       setIsAiConfigured(data.isAiProviderConfigured);
-      showToast('Document parsed successfully! Review and correct extracted values below.', 'success');
+
+      // Synthesize prompt for auto-create workflow
+      const ext = data.extractedData || {};
+      const generatedPrompt = data.autoCreatePrompt || `Formulate compliant FSSAI food label for "${(ext.brandName ? ext.brandName + ' ' : '')}${ext.productName || 'Artisan Food Product'}" in category "${ext.category || 'General Packaged Food'}". Net quantity: ${ext.netQuantityValue || ext.netQuantity || 400}${ext.netQuantityUnit || 'g'}. Detected ingredients: ${(ext.ingredients || []).map((i: any) => i.name).filter(Boolean).join(', ') || 'Natural artisan ingredients'}. FSSAI: ${ext.fssaiLicense || 'Standard 14-digit license'}. Auto-generate statutory allergen declarations, nutrition facts per 100g, and batch traceability.`;
+      setAutoCreatePrompt(generatedPrompt);
+
+      if (ext.isFoodPackaging === false || ext.unrecognizedTypeReason) {
+        showToast('Warning: Image does not appear to be food packaging. Review advisory notice below.', 'warning');
+      } else {
+        showToast('Packaging parsed successfully! Review text and select a manual option to proceed.', 'success');
+      }
     } catch (err: any) {
       console.error('Scan error:', err);
-      showToast(`Scan error: ${err.message}`, 'error');
+      const isTimeout = err.name === 'TimeoutError' || err.message?.includes('timeout') || err.message?.includes('aborted');
+      const friendlyMsg = isTimeout
+        ? 'Scanning timed out. The image may be very high-resolution or the OCR server is busy. Try cropping to the label area and retrying.'
+        : `Scan failed: ${err.message}`;
+      showToast(friendlyMsg, 'error');
     } finally {
       setIsScanning(false);
+      setScanProgressStage('idle');
     }
   };
 
-  // Load sample demo pickle packaging document
+  // Load sample demo pickle packaging document with safety alert against overwriting gathered image data
   const loadDemoPackagingSample = () => {
+    if (scanResult) {
+      const confirmReplace = window.confirm(
+        '⚠️ Alert: Loading sample demo packaging will overwrite and replace the data currently gathered from your scanned image. Are you sure you want to proceed?'
+      );
+      if (!confirmReplace) return;
+    }
     stopCamera();
     setSelectedFile(null);
     setHasNoText(false);
@@ -381,63 +471,143 @@ export const ScannerPage: React.FC = () => {
     }
   };
 
-  // Transfer extracted data to active label in context
-  const transferToEditor = () => {
+  // Pre-fill baseline nutritional estimates with safety confirmation against overwriting OCR-gathered data
+  const applyStandardDefaultNutrition = () => {
     if (!scanResult) return;
+    const currentNut = scanResult.nutrition || {};
+    const hasExtractedValues = Boolean(
+      currentNut.energyKcal != null ||
+      currentNut.proteinG != null ||
+      currentNut.totalFatG != null ||
+      currentNut.carbohydratesG != null ||
+      currentNut.sodiumMg != null
+    );
 
-    // Build provenance map for extracted fields
-    const provenanceMap: Record<string, 'ocr_extraction' | 'user_input'> = {};
-    if (scanResult.productName) provenanceMap.productName = 'ocr_extraction';
-    if (scanResult.brandName) provenanceMap.brandName = 'ocr_extraction';
-    if (scanResult.category) provenanceMap.category = 'ocr_extraction';
-    if (scanResult.netQuantity) provenanceMap.netQuantity = 'ocr_extraction';
-    if (scanResult.fssaiLicense) provenanceMap.fssaiLicense = 'ocr_extraction';
-    if (scanResult.ingredients?.length) provenanceMap.ingredients = 'ocr_extraction';
-    if (scanResult.nutrition) provenanceMap.nutrition = 'ocr_extraction';
-    if (scanResult.batchNumber) provenanceMap.batchNumber = 'ocr_extraction';
+    if (hasExtractedValues) {
+      const ok = window.confirm(
+        '⚠️ Alert: Applying default nutritional estimates will overwrite and replace the values currently gathered from your scanned package image. Do you want to proceed?'
+      );
+      if (!ok) return;
+    }
 
-    updateCurrentLabel({
-      productName: scanResult.productName || 'Extracted Food Product',
-      brandName: scanResult.brandName || '',
-      category: scanResult.category || 'General Packaged Food',
-      netQuantity: scanResult.netQuantityValue || scanResult.netQuantity || 400,
-      netQuantityUnit: scanResult.netQuantityUnit || 'g',
-      fssaiLicense: scanResult.fssaiLicense || '',
-      dietaryClassification: scanResult.isVegetarian !== false ? 'veg' : 'non-veg',
-      ingredients: scanResult.ingredients || [],
-      allergenDeclarations: scanResult.allergenDeclarations || [],
+    setScanResult({
+      ...scanResult,
       nutrition: {
-        servingBasis: scanResult.nutrition?.servingBasis || 'per 100g',
-        servingSize: scanResult.nutrition?.servingSize || '100g',
-        energyKcal: scanResult.nutrition?.energyKcal ?? null,
-        proteinG: scanResult.nutrition?.proteinG ?? null,
-        carbohydratesG: scanResult.nutrition?.carbohydratesG ?? null,
-        totalSugarsG: scanResult.nutrition?.totalSugarsG ?? null,
-        addedSugarsG: scanResult.nutrition?.addedSugarsG ?? null,
-        totalFatG: scanResult.nutrition?.totalFatG ?? null,
-        saturatedFatG: scanResult.nutrition?.saturatedFatG ?? null,
-        transFatG: scanResult.nutrition?.transFatG ?? null,
-        cholesterolMg: scanResult.nutrition?.cholesterolMg ?? null,
-        sodiumMg: scanResult.nutrition?.sodiumMg ?? null,
-      },
-      batchNumber: scanResult.batchNumber || '',
-      mfgDate: scanResult.mfgDate || '',
-      expiryDate: scanResult.expiryDate || '',
-      storageInstructions: scanResult.storageInstructions || 'Store in a cool dry place.',
+        ...currentNut,
+        energyKcal: 236,
+        proteinG: 2.4,
+        carbohydratesG: 14.8,
+        totalSugarsG: 2.1,
+        addedSugarsG: 0.0,
+        totalFatG: 18.5,
+        saturatedFatG: 2.2,
+        transFatG: 0.0,
+        cholesterolMg: 0.0,
+        sodiumMg: 4280,
+      }
+    });
+    showToast('Applied baseline nutritional estimates.', 'info');
+  };
+
+  // Helper to build label data structure from extracted scan
+  const buildLabelData = (data: any, panelIndex: number) => {
+    const panels: any[] = data.supplementPanels || [];
+    const activePanel = panels.length > 0 ? panels[panelIndex] : null;
+
+    const findActiveNutrient = (namePatterns: RegExp[]): number | null => {
+      if (!activePanel?.nutrients || !Array.isArray(activePanel.nutrients)) return null;
+      for (const n of activePanel.nutrients) {
+        if (namePatterns.some(p => p.test(n.name))) {
+          const match = (n.amount || '').match(/(\d+(?:\.\d+)?)/);
+          if (match) return parseFloat(match[1]);
+        }
+      }
+      return null;
+    };
+
+    const nutritionSource = data.nutrition || {};
+    const nutrition = {
+      servingBasis: activePanel
+        ? `per serving (${activePanel.servingSize || 'see label'})`
+        : (nutritionSource.servingBasis || 'per 100g'),
+      servingSize: activePanel?.servingSize || nutritionSource.servingSize || '100g',
+      energyKcal: findActiveNutrient([/calor/i, /energy/i]) ?? (nutritionSource.energyKcal ?? null),
+      proteinG: findActiveNutrient([/protein/i]) ?? (nutritionSource.proteinG ?? null),
+      carbohydratesG: findActiveNutrient([/carb/i]) ?? (nutritionSource.carbohydratesG ?? null),
+      totalSugarsG: findActiveNutrient([/sugar/i]) ?? (nutritionSource.totalSugarsG ?? null),
+      addedSugarsG: findActiveNutrient([/added.*sugar/i]) ?? (nutritionSource.addedSugarsG ?? null),
+      totalFatG: findActiveNutrient([/(?:total\s*)?fat/i]) ?? (nutritionSource.totalFatG ?? null),
+      saturatedFatG: findActiveNutrient([/sat.*fat/i]) ?? (nutritionSource.saturatedFatG ?? null),
+      transFatG: findActiveNutrient([/trans.*fat/i]) ?? (nutritionSource.transFatG ?? null),
+      cholesterolMg: findActiveNutrient([/cholest/i]) ?? (nutritionSource.cholesterolMg ?? null),
+      sodiumMg: findActiveNutrient([/sodium/i]) ?? (nutritionSource.sodiumMg ?? null),
+    };
+
+    const normalizedAllergens: string[] = (data.allergenDeclarations || []).map((a: any) =>
+      typeof a === 'string' ? a : (a?.text || '')
+    ).filter(Boolean);
+
+    const provenanceMap: Record<string, 'ocr_extraction' | 'user_input'> = {};
+    if (data.productName) provenanceMap.productName = 'ocr_extraction';
+    if (data.brandName) provenanceMap.brandName = 'ocr_extraction';
+    if (data.category) provenanceMap.category = 'ocr_extraction';
+    if (data.netQuantity) provenanceMap.netQuantity = 'ocr_extraction';
+    if (data.fssaiLicense) provenanceMap.fssaiLicense = 'ocr_extraction';
+    if (data.ingredients?.length) provenanceMap.ingredients = 'ocr_extraction';
+    if (data.nutrition) provenanceMap.nutrition = 'ocr_extraction';
+    if (data.batchNumber) provenanceMap.batchNumber = 'ocr_extraction';
+
+    return {
+      productName: data.productName || 'Extracted Food Product',
+      brandName: data.brandName || '',
+      category: data.category || (activePanel ? 'Dietary Supplements' : 'General Packaged Food'),
+      netQuantity: data.netQuantityValue || data.netQuantity || 400,
+      netQuantityUnit: data.netQuantityUnit || 'g',
+      fssaiLicense: data.fssaiLicense || '',
+      dietaryClassification: (data.isVegetarian !== false ? 'veg' : 'non-veg') as any,
+      ingredients: (data.ingredients || []).map((ing: any, idx: number) => ({
+        id: ing.id || `ing-scan-${idx}`,
+        name: ing.name || '',
+        percentage: ing.percentage || '',
+        order: ing.order || (idx + 1),
+        isAllergen: Boolean(ing.isAllergen),
+      })),
+      allergenDeclarations: normalizedAllergens,
+      nutrition,
+      batchNumber: data.batchNumber || '',
+      mfgDate: data.mfgDate || '',
+      expiryDate: data.expiryDate || '',
+      storageInstructions: data.storageInstructions || 'Store in a cool dry place.',
       manufacturer: {
-        name: scanResult.manufacturer?.name || scanResult.manufacturerDetails?.name || '',
-        address: scanResult.manufacturer?.address || scanResult.manufacturerDetails?.address || '',
+        name: data.manufacturer?.name || data.manufacturerDetails?.name || '',
+        address: data.manufacturer?.address || data.manufacturerDetails?.address || '',
         city: '',
         state: '',
         postalCode: '',
         country: 'India',
-        customerCarePhone: scanResult.manufacturer?.customerCarePhone || '',
-        customerCareEmail: scanResult.manufacturer?.customerCareEmail || '',
+        customerCarePhone: data.manufacturer?.customerCarePhone || '',
+        customerCareEmail: data.manufacturer?.customerCareEmail || '',
       },
       provenanceMap,
       updatedAt: new Date().toISOString(),
-    });
+    };
+  };
 
+  // Auto-Create & Proceed directly to Step 2 (Ingredients & Allergens)
+  const autoCreateAndProceedToStep2 = () => {
+    if (!scanResult) return;
+    const labelData = buildLabelData(scanResult, selectedPanelIndex);
+    updateCurrentLabel(labelData);
+    setCreateWizardStep(2);
+    showToast('✨ AI auto-created product label! Ready in Step 2: Ingredients & Allergens.', 'success');
+    setActiveTab('create');
+  };
+
+  // Transfer extracted data to active label in context
+  const transferToEditor = () => {
+    if (!scanResult) return;
+    const labelData = buildLabelData(scanResult, selectedPanelIndex);
+    updateCurrentLabel(labelData);
     showToast('Extracted packaging data transferred to Visual Canvas with provenance tracking!', 'success');
     setActiveTab('editor');
   };
@@ -450,7 +620,7 @@ export const ScannerPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 py-6 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 animate-fade-in">
+    <div className="space-y-8 py-6 pb-28 sm:pb-8 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 animate-fade-in">
       {/* Header Banner */}
       <div className="bg-white p-6 rounded-2xl border border-cream-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -733,16 +903,39 @@ export const ScannerPage: React.FC = () => {
             </div>
 
             {/* Run OCR Scan Trigger */}
-            <div className="flex justify-end pt-2">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+              {isScanning && (
+                <div className="w-full sm:w-auto flex-1 p-3 rounded-xl bg-forest-900 text-white border border-limeaccent-400/40 shadow-sm space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="flex items-center gap-2 text-limeaccent-300">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-limeaccent-400" />
+                      {scanProgressStage === 'optimizing' && 'Step 1/3: Optimizing resolution & contrast...'}
+                      {scanProgressStage === 'scanning_ai' && 'Step 2/3: Processing with Google Gemini 3.5 Flash Vision...'}
+                      {scanProgressStage === 'formulating_ai' && 'Step 3/3: Synthesizing AI formulation & FSSAI fields...'}
+                      {scanProgressStage === 'idle' && 'Extracting packaging data...'}
+                    </span>
+                    <span className="text-[10px] text-cream-300 font-mono">Ultra-fast</span>
+                  </div>
+                  <div className="w-full bg-forest-950 h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-limeaccent-400 h-full transition-all duration-300 rounded-full" 
+                      style={{ 
+                        width: scanProgressStage === 'optimizing' ? '30%' : scanProgressStage === 'scanning_ai' ? '70%' : '95%' 
+                      }} 
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
                 disabled={isScanning}
                 onClick={() => executeScan(selectedFile, false)}
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-forest-900 hover:bg-forest-800 text-white font-bold text-xs transition-all shadow-md disabled:opacity-50 active:scale-95 cursor-pointer"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-forest-900 hover:bg-forest-800 text-white font-bold text-xs transition-all shadow-md disabled:opacity-50 active:scale-95 cursor-pointer ml-auto shrink-0"
               >
                 {isScanning ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin text-limeaccent-400" />
-                    <span>Running Optical Character Extraction...</span>
+                    <span>Extracting with Gemini Vision...</span>
                   </>
                 ) : (
                   <>
@@ -802,6 +995,136 @@ export const ScannerPage: React.FC = () => {
       {/* Extracted Results Section */}
       {scanResult && (
         <div className="space-y-6">
+          {/* Non-Food or Inappropriate Label Advisory Warning */}
+          {(scanResult.isFoodPackaging === false || Boolean(scanResult.unrecognizedTypeReason)) && (
+            <div className="p-5 rounded-2xl bg-amber-50 border-2 border-amber-300 shadow-sm space-y-3">
+              <div className="flex items-start gap-3.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0 font-bold shadow-xs">
+                  <AlertTriangle className="w-5 h-5 text-amber-800" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-amber-950">
+                      Unrecognized or Non-Food Label Detected
+                    </h3>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-200 text-amber-900 uppercase">
+                      Action Required
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-900 leading-relaxed">
+                    {scanResult.unrecognizedTypeReason || 'This image does not appear to be an authentic food, beverage, or dietary supplement packaging label. Statutory food fields (product name, ingredients, nutrition facts, or net quantity) were missing.'}
+                  </p>
+                  <p className="text-[11px] text-amber-800 font-semibold pt-1">
+                    👉 Please upload a photo of an authentic food package label showing the front display or ingredient/nutrition facts panel.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-amber-200/80">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-forest-900 hover:bg-forest-800 text-white font-semibold text-xs transition-all shadow-sm cursor-pointer"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 text-limeaccent-400" />
+                  Upload Correct Food Label Image
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startCamera('environment')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-cream-100 text-slate-700 font-semibold text-xs border border-cream-300 transition-all cursor-pointer"
+                >
+                  <Camera className="w-3.5 h-3.5 text-slate-600" />
+                  Take Packaging Photo
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* AI Auto-Creation Banner & Action Center */}
+          <div className="p-6 rounded-2xl bg-gradient-to-br from-forest-950 via-forest-900 to-forest-950 border border-limeaccent-400/40 shadow-xl text-white space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-limeaccent-400 text-forest-950 flex items-center justify-center font-bold text-lg shadow-md shrink-0">
+                  ✨
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-white tracking-wide">
+                      AI Auto-Created Label Formulation
+                    </h2>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-limeaccent-400 text-forest-950">
+                      Step 1 Complete &bull; Step 2 Ready
+                    </span>
+                  </div>
+                  <p className="text-xs text-cream-200 mt-0.5">
+                    Extracted from your packaging image. AI formulated the label prompt and synthesized regulatory fields.
+                  </p>
+                </div>
+              </div>
+
+              {/* Manual Control Status Badge — No auto-progression */}
+              <div className="flex items-center gap-2 bg-forest-800/90 px-3.5 py-1.5 rounded-xl border border-limeaccent-400/40 text-xs text-limeaccent-300 shadow-sm">
+                <CheckCircle2 className="w-3.5 h-3.5 text-limeaccent-400" />
+                <span>Manual Progression Options Ready</span>
+              </div>
+            </div>
+
+            {/* Synthesized Auto-Create Prompt Preview */}
+            <div className="p-3.5 rounded-xl bg-forest-900/90 border border-forest-700/80 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-limeaccent-400 flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3 text-limeaccent-400" />
+                  Synthesized AI Auto-Create Prompt
+                </span>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(autoCreatePrompt);
+                    showToast('AI Auto-Create prompt copied to clipboard!', 'info');
+                  }}
+                  className="text-[10px] font-semibold text-cream-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                >
+                  <Copy className="w-3 h-3" />
+                  Copy Prompt
+                </button>
+              </div>
+              <p className="text-xs text-cream-100 font-mono leading-relaxed bg-forest-950/60 p-2.5 rounded-lg border border-forest-800">
+                {autoCreatePrompt}
+              </p>
+            </div>
+
+            {/* Primary Action Buttons */}
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                onClick={autoCreateAndProceedToStep2}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-limeaccent-400 hover:bg-limeaccent-300 text-forest-950 font-extrabold text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4 text-forest-950" />
+                <span>Auto-Create & Continue to Step 2 (Ingredients & Allergens)</span>
+                <ArrowRight className="w-4 h-4 text-forest-950" />
+              </button>
+
+              <button
+                onClick={transferToEditor}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition-all border border-white/20 active:scale-95 cursor-pointer"
+              >
+                <Eye className="w-4 h-4 text-limeaccent-400" />
+                <span>Open in Visual Canvas</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  const el = document.getElementById('manual-review-section');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl bg-transparent hover:bg-white/5 text-cream-300 hover:text-white text-xs font-semibold transition-all ml-auto cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Review & Edit Extracted Fields Below</span>
+              </button>
+            </div>
+          </div>
+
           {/* Status & Method Bar */}
           <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -832,7 +1155,7 @@ export const ScannerPage: React.FC = () => {
 
           {/* Step 1 & 2: Review Raw OCR Text & Analyze with AI */}
           {rawTextSnippet && (
-            <div className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-3">
+            <div id="manual-review-section" className="bg-white p-5 rounded-2xl border border-cream-200 shadow-sm space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
@@ -1039,58 +1362,71 @@ export const ScannerPage: React.FC = () => {
               </div>
 
               {scanResult.ingredients && scanResult.ingredients.length > 0 ? (
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {scanResult.ingredients.map((ing: any, i: number) => (
-                    <div key={i} className="flex items-center gap-2 p-2 bg-cream-50 rounded-xl border border-cream-200">
-                      <span className="text-[11px] font-mono font-bold text-slate-400 w-5 text-center">{i + 1}</span>
-                      <input
-                        type="text"
-                        value={ing.name || ''}
-                        onChange={(e) => {
-                          const updated = [...scanResult.ingredients];
-                          updated[i] = { ...updated[i], name: e.target.value };
-                          setScanResult({ ...scanResult, ingredients: updated });
-                        }}
-                        placeholder="Ingredient name"
-                        className="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
-                      />
-                      <input
-                        type="text"
-                        value={ing.percentage || ''}
-                        onChange={(e) => {
-                          const updated = [...scanResult.ingredients];
-                          updated[i] = { ...updated[i], percentage: e.target.value };
-                          setScanResult({ ...scanResult, ingredients: updated });
-                        }}
-                        placeholder="% (optional)"
-                        className="w-20 text-xs px-2 py-1.5 rounded-lg border border-cream-300 bg-white text-center"
-                      />
-                      <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer px-2 py-1 rounded bg-white border border-cream-200">
+                <div className="space-y-2">
+                  <div className={`space-y-2 pr-1 ${showAllIngredients ? '' : 'max-h-60 overflow-y-auto'}`}>
+                    {(showAllIngredients ? scanResult.ingredients : scanResult.ingredients.slice(0, 6)).map((ing: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 p-2 bg-cream-50 rounded-xl border border-cream-200">
+                        <span className="text-[11px] font-mono font-bold text-slate-400 w-5 text-center">{i + 1}</span>
                         <input
-                          type="checkbox"
-                          checked={Boolean(ing.isAllergen)}
+                          type="text"
+                          value={ing.name || ''}
                           onChange={(e) => {
                             const updated = [...scanResult.ingredients];
-                            updated[i] = { ...updated[i], isAllergen: e.target.checked };
+                            updated[i] = { ...updated[i], name: e.target.value };
                             setScanResult({ ...scanResult, ingredients: updated });
                           }}
-                          className="rounded text-forest-800"
+                          placeholder="Ingredient name"
+                          className="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white"
                         />
-                        <span>Allergen</span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = scanResult.ingredients.filter((_: any, idx: number) => idx !== i);
-                          setScanResult({ ...scanResult, ingredients: updated });
-                        }}
-                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Remove ingredient"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                        <input
+                          type="text"
+                          value={ing.percentage || ''}
+                          onChange={(e) => {
+                            const updated = [...scanResult.ingredients];
+                            updated[i] = { ...updated[i], percentage: e.target.value };
+                            setScanResult({ ...scanResult, ingredients: updated });
+                          }}
+                          placeholder="% (optional)"
+                          className="w-20 text-xs px-2 py-1.5 rounded-lg border border-cream-300 bg-white text-center"
+                        />
+                        <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer px-2 py-1 rounded bg-white border border-cream-200">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(ing.isAllergen)}
+                            onChange={(e) => {
+                              const updated = [...scanResult.ingredients];
+                              updated[i] = { ...updated[i], isAllergen: e.target.checked };
+                              setScanResult({ ...scanResult, ingredients: updated });
+                            }}
+                            className="rounded text-forest-800"
+                          />
+                          <span>Allergen</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = scanResult.ingredients.filter((_: any, idx: number) => idx !== i);
+                            setScanResult({ ...scanResult, ingredients: updated });
+                          }}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Remove ingredient"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {scanResult.ingredients.length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllIngredients(prev => !prev)}
+                      className="w-full text-center text-[11px] font-semibold text-forest-800 hover:text-forest-600 py-1.5 rounded-lg bg-cream-50 border border-cream-200 hover:bg-cream-100 transition-colors"
+                    >
+                      {showAllIngredients
+                        ? `↑ Show fewer ingredients`
+                        : `↓ Show all ${scanResult.ingredients.length} ingredients (${scanResult.ingredients.length - 6} more hidden)`}
+                    </button>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-slate-500 italic p-3 bg-cream-50 rounded-xl border border-cream-200">
@@ -1141,25 +1477,100 @@ export const ScannerPage: React.FC = () => {
 
             {/* Nutrition Facts Review & Edit */}
             <div className="pt-2 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
                   Nutritional Information (Per 100g / 100ml)
                 </label>
-                <span className="text-[11px] text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                  Verify against lab report or ICMR-NIN tables
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={applyStandardDefaultNutrition}
+                    className="px-2.5 py-1 rounded-lg bg-forest-50 hover:bg-forest-100 text-forest-900 border border-forest-300 font-semibold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Fill standard baseline nutritional values with safety overwrite alert"
+                  >
+                    <Sparkles className="w-3 h-3 text-forest-700" />
+                    <span>Fill Baseline Estimates</span>
+                  </button>
+                  <span className="text-[11px] text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    Verify against lab report
+                  </span>
+                </div>
               </div>
+
+              {/* Supplement Panels Selector — shown only when multiple panels were extracted */}
+              {scanResult.supplementPanels && scanResult.supplementPanels.length > 0 && (
+                <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-blue-700" />
+                    <span className="text-xs font-bold text-blue-900">
+                      {scanResult.supplementPanels.length} Separate Supplement Facts Panels Detected
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-blue-700 leading-relaxed">
+                    Multiple panels were found (e.g. AM / PM packets or different dosage forms). Each panel is shown separately below. Select the one to use when transferring to the label editor.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {scanResult.supplementPanels.map((panel: any, pi: number) => (
+                      <button
+                        key={pi}
+                        type="button"
+                        onClick={() => setSelectedPanelIndex(pi)}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors ${
+                          selectedPanelIndex === pi
+                            ? 'bg-blue-700 text-white border-blue-700'
+                            : 'bg-white text-blue-800 border-blue-300 hover:bg-blue-100'
+                        }`}
+                      >
+                        {panel.panelName || `Panel ${pi + 1}`}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Render the selected panel's nutrients */}
+                  {scanResult.supplementPanels[selectedPanelIndex] && (
+                    <div className="mt-2">
+                      <div className="text-[11px] font-bold text-blue-900 mb-1.5">
+                        {scanResult.supplementPanels[selectedPanelIndex].panelName || `Panel ${selectedPanelIndex + 1}`} — Serving: {scanResult.supplementPanels[selectedPanelIndex].servingSize || '—'}
+                        {scanResult.supplementPanels[selectedPanelIndex].servingsPerContainer && (
+                          <span className="font-normal text-blue-700"> · {scanResult.supplementPanels[selectedPanelIndex].servingsPerContainer} servings/container</span>
+                        )}
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px] border-collapse">
+                          <thead>
+                            <tr className="bg-blue-100 text-blue-900">
+                              <th className="text-left px-2 py-1 font-bold rounded-tl">Nutrient</th>
+                              <th className="text-right px-2 py-1 font-bold">Amount</th>
+                              <th className="text-right px-2 py-1 font-bold rounded-tr">% DV</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(scanResult.supplementPanels[selectedPanelIndex].nutrients || []).map((n: any, ni: number) => (
+                              <tr key={ni} className={ni % 2 === 0 ? 'bg-white' : 'bg-blue-50/40'}>
+                                <td className="px-2 py-1 text-slate-800">{n.name}</td>
+                                <td className="px-2 py-1 text-right font-mono text-slate-700">{n.amount}</td>
+                                <td className="px-2 py-1 text-right text-slate-500">{n.percentDV || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div>
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Energy (kcal)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.energyKcal ?? 236}
+                    value={scanResult.nutrition?.energyKcal ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, energyKcal: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, energyKcal: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1167,11 +1578,12 @@ export const ScannerPage: React.FC = () => {
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Protein (g)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.proteinG ?? 2.4}
+                    value={scanResult.nutrition?.proteinG ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, proteinG: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, proteinG: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1179,11 +1591,12 @@ export const ScannerPage: React.FC = () => {
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Carbohydrates (g)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.carbohydratesG ?? 14.8}
+                    value={scanResult.nutrition?.carbohydratesG ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, carbohydratesG: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, carbohydratesG: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1191,11 +1604,12 @@ export const ScannerPage: React.FC = () => {
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Total Sugars (g)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.totalSugarsG ?? 2.1}
+                    value={scanResult.nutrition?.totalSugarsG ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, totalSugarsG: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, totalSugarsG: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1203,11 +1617,12 @@ export const ScannerPage: React.FC = () => {
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Added Sugars (g)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.addedSugarsG ?? 0.0}
+                    value={scanResult.nutrition?.addedSugarsG ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, addedSugarsG: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, addedSugarsG: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1215,11 +1630,12 @@ export const ScannerPage: React.FC = () => {
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Total Fat (g)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.totalFatG ?? 18.5}
+                    value={scanResult.nutrition?.totalFatG ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, totalFatG: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, totalFatG: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1227,11 +1643,38 @@ export const ScannerPage: React.FC = () => {
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Saturated Fat (g)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.saturatedFatG ?? 2.2}
+                    value={scanResult.nutrition?.saturatedFatG ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, saturatedFatG: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, saturatedFatG: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
+                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Trans Fat (g)</label>
+                  <input
+                    type="number"
+                    value={scanResult.nutrition?.transFatG ?? ''}
+                    onChange={(e) => setScanResult({
+                      ...scanResult,
+                      nutrition: { ...scanResult.nutrition, transFatG: e.target.value === '' ? null : parseFloat(e.target.value) }
+                    })}
+                    placeholder="0.0"
+                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Cholesterol (mg)</label>
+                  <input
+                    type="number"
+                    value={scanResult.nutrition?.cholesterolMg ?? ''}
+                    onChange={(e) => setScanResult({
+                      ...scanResult,
+                      nutrition: { ...scanResult.nutrition, cholesterolMg: e.target.value === '' ? null : parseFloat(e.target.value) }
+                    })}
+                    placeholder="0.0"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1239,11 +1682,12 @@ export const ScannerPage: React.FC = () => {
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Sodium (mg)</label>
                   <input
                     type="number"
-                    value={scanResult.nutrition?.sodiumMg ?? 4280}
+                    value={scanResult.nutrition?.sodiumMg ?? ''}
                     onChange={(e) => setScanResult({
                       ...scanResult,
-                      nutrition: { ...scanResult.nutrition, sodiumMg: parseFloat(e.target.value) || 0 }
+                      nutrition: { ...scanResult.nutrition, sodiumMg: e.target.value === '' ? null : parseFloat(e.target.value) }
                     })}
+                    placeholder="Leave blank if unverified"
                     className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 font-mono"
                   />
                 </div>
@@ -1255,6 +1699,35 @@ export const ScannerPage: React.FC = () => {
               <span className="text-xs font-bold text-slate-900 block">
                 Verification & Quality Control Checklist:
               </span>
+
+              {/* Allergen declarations review — shown when allergens were detected */}
+              {scanResult.allergenDeclarations && scanResult.allergenDeclarations.length > 0 && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    Detected Allergen Declarations — Verify Before Publishing
+                  </div>
+                  {(scanResult.allergenDeclarations as any[]).map((a: any, ai: number) => {
+                    const text = typeof a === 'string' ? a : a?.text || '';
+                    const needsVerification = typeof a === 'object' ? Boolean(a?.needsVerification) : false;
+                    return (
+                      <div key={ai} className="flex items-start gap-2 text-[11px] text-amber-800">
+                        {needsVerification && (
+                          <span className="shrink-0 px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 font-semibold">
+                            ⚠ Verify
+                          </span>
+                        )}
+                        <span className="leading-relaxed">{text}</span>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[10px] text-amber-700 leading-relaxed pt-1">
+                    Fish-derived ingredients (e.g. cod liver oil) must be checked against FSSAI Schedule IX. 
+                    Tick the checklist below only after reviewing source wording on the physical label.
+                  </p>
+                </div>
+              )}
+
               <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
                 <input
                   type="checkbox"
@@ -1271,7 +1744,7 @@ export const ScannerPage: React.FC = () => {
                   onChange={(e) => setConfirmNutrition(e.target.checked)}
                   className="mt-0.5 rounded text-forest-800"
                 />
-                <span>I confirm that the declared ingredients and nutritional values reflect genuine laboratory or formulation data.</span>
+                <span>I confirm that the declared ingredients, allergens, and nutritional values reflect genuine laboratory or formulation data.</span>
               </label>
             </div>
 
@@ -1281,13 +1754,24 @@ export const ScannerPage: React.FC = () => {
                 Values will be marked with <strong>OCR Extraction</strong> provenance in your active draft.
               </span>
 
-              <button
-                onClick={transferToEditor}
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-forest-900 hover:bg-forest-800 text-white font-bold text-xs transition-all shadow-md active:scale-95 cursor-pointer"
-              >
-                <span>Transfer to Live Canvas</span>
-                <ArrowRight className="w-4 h-4 text-limeaccent-400" />
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={autoCreateAndProceedToStep2}
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-limeaccent-400 hover:bg-limeaccent-300 text-forest-950 font-extrabold text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-forest-950" />
+                  <span>Auto-Create & Continue to Step 2</span>
+                  <ArrowRight className="w-4 h-4 text-forest-950" />
+                </button>
+
+                <button
+                  onClick={transferToEditor}
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-forest-900 hover:bg-forest-800 text-white font-bold text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+                >
+                  <span>Transfer to Live Canvas</span>
+                  <ArrowRight className="w-4 h-4 text-limeaccent-400" />
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -75,6 +75,7 @@ export interface LabelDimensions {
   customAccentColor?: string;
   customBgColor?: string;
   customTextColor?: string;
+  customBorderColor?: string;
   showCertifications?: boolean;
   selectedCertifications?: string[];
 }
@@ -125,6 +126,8 @@ export interface ProductLabel {
   version: number;
   productName: string;
   brandName: string;
+  brandQuote?: string; // Brand tagline or artisan quote e.g. "Pure Farm Harvested with Love"
+  bestBeforePeriod?: string; // e.g. "6 Months from Manufacture", "12 Months from Packing"
   category: string;
   description: string;
   netQuantity: number;

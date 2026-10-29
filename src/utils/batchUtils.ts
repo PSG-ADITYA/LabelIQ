@@ -88,29 +88,24 @@ export function getValidQrUrl(label: {
   qrCodeUrl?: string; 
   batchNumber?: string; 
   id?: string;
+  fssaiLicense?: string;
   qrDestinationType?: 'public_traceability' | 'foscos_portal' | 'custom_url';
 }): string {
-  // Option 1: Explicit FoSCoS Government Portal
-  if (label.qrDestinationType === 'foscos_portal') {
-    return OFFICIAL_FSSAI_VERIFY_PORTAL;
-  }
-
-  // Option 2: Custom Producer Website URL
+  // Option 1: Custom Producer Website URL
   if (label.qrDestinationType === 'custom_url' && label.qrCodeUrl && label.qrCodeUrl.startsWith('http')) {
     return label.qrCodeUrl;
   }
 
-  // Option 3: Custom URL provided in qrCodeUrl (if valid)
-  if (label.qrCodeUrl && label.qrCodeUrl.startsWith('http')) {
-    if (!label.qrCodeUrl.includes('pahadiheritagefarms.com') && !label.qrCodeUrl.includes('fssai.gov.in/verify/')) {
-      return label.qrCodeUrl;
-    }
-  }
-
-  // Default Option: Public Batch Traceability Page
-  if (label.batchNumber || label.id) {
+  // Option 2: Public Batch Traceability Page (when explicitly selected)
+  if (label.qrDestinationType === 'public_traceability' && (label.batchNumber || label.id)) {
     return getPublicTraceabilityUrl(label.batchNumber || label.id || '');
   }
 
+  // Option 3: Custom URL provided in qrCodeUrl (if non-default)
+  if (label.qrCodeUrl && label.qrCodeUrl.startsWith('http') && !label.qrCodeUrl.includes('localhost') && !label.qrCodeUrl.includes('127.0.0.1')) {
+    return label.qrCodeUrl;
+  }
+
+  // Default: Official FSSAI FoSCoS Portal (Government License & Compliance Verification)
   return OFFICIAL_FSSAI_VERIFY_PORTAL;
 }
